@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Ghost body -->
+  <path d="M32 6 C16 6 10 19 10 30 L10 58 L16 51 L22 58 L28 51 L34 58 L40 51 L46 58 L52 51 L54 58 L54 30 C54 19 48 6 32 6Z" fill="#C9A84C"/>
+  <!-- Eye glow -->
+  <ellipse cx="24" cy="32" rx="5" ry="5.5" fill="#1A1A1A"/>
+  <ellipse cx="40" cy="32" rx="5" ry="5.5" fill="#1A1A1A"/>
+  <circle cx="22.5" cy="30" r="1.8" fill="rgba(255,255,255,0.6)"/>
+  <circle cx="38.5" cy="30" r="1.8" fill="rgba(255,255,255,0.6)"/>
+  <!-- Chat bubble -->
+  <rect x="37" y="3" width="24" height="16" rx="8" fill="#4A9B8E"/>
+  <polygon points="43,19 37,27 51,19" fill="#4A9B8E"/>
+  <circle cx="43" cy="11" r="2.2" fill="#1A1A1A"/>
+  <circle cx="49" cy="11" r="2.2" fill="#1A1A1A"/>
+  <circle cx="55" cy="11" r="2.2" fill="#1A1A1A"/>
+</svg>

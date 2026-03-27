@@ -1,0 +1,30 @@
+version: "3.9"
+services:
+  darkenchat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+
+      # ── TURN server (optional) ──────────────────────────────────────────
+      # TURN_URLS: comma-separated TURN server URLs shown as the default in the UI.
+      #   Users can still override with their own TURN server in the browser.
+      #   Example: TURN_URLS=turn:turn.darken.cc:3478
+      TURN_URLS: ${TURN_URLS:-}
+
+      # Auth mode A — HMAC (recommended, coturn use-auth-secret):
+      #   Generate with: openssl rand -hex 32
+      TURN_SECRET: ${TURN_SECRET:-}
+
+      # Auth mode B — Static credentials (alternative to HMAC, set BOTH or neither):
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      # ───────────────────────────────────────────────────────────────────
+
+    # volumes:
+    #   - ./config.yaml:/app/config.yaml:ro
+    restart: unless-stopped

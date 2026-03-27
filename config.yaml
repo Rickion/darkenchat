@@ -1,0 +1,42 @@
+server:
+  host: "0.0.0.0"
+  port: 3000
+  cors_origins:
+    - "https://your-domain.com"
+    - "http://localhost:5173"
+
+ice:
+  stun_urls:
+    - "stun:stun.cloudflare.com:3478"
+    - "stun:stun.l.google.com:19302"
+  # TURN — all settings should be provided via environment variables (see docker-compose.yml).
+  # config.yaml values are used as fallback when env vars are not set.
+  #
+  # Auth mode A — HMAC (recommended, for coturn use-auth-secret):
+  #   Set TURN_URLS + TURN_SECRET env vars.
+  #   Credentials are time-limited and generated server-side; the secret never reaches clients.
+  #
+  # Auth mode B — Static credentials:
+  #   Set TURN_URLS + TURN_USERNAME + TURN_CREDENTIAL env vars.
+  #
+  turn:
+    urls: []          # override with TURN_URLS env var (comma-separated)
+    auth_secret: "${TURN_SECRET}"
+    ttl_seconds: 3600
+
+security:
+  admin_token: "${ADMIN_TOKEN}"
+  rate_limit:
+    window_seconds: 60
+    max_key_probes: 10
+    ban_duration_seconds: 3600
+
+room:
+  max_members: 50
+  max_bot_members: 3
+  heartbeat_interval_seconds: 3
+  heartbeat_timeout_seconds: 10
+
+log:
+  level: "info"
+  switch_log_max_entries: 1000

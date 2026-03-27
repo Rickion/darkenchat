@@ -1,0 +1,7 @@
+.playwright-mcp/*
+node_modules
+.DS_Store
+dist
+darkenchat-prd.md
+TESTCASES.md
+TEST_REPORT.md

@@ -1,0 +1,17 @@
+{
+  "name": "DarkenChat",
+  "short_name": "DarkenChat",
+  "description": "Private ephemeral P2P chat",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#121212",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

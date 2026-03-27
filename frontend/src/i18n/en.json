@@ -1,0 +1,108 @@
+{
+  "app": {
+    "name": "DarkenChat",
+    "privacy": "Messages travel directly between devices. Nothing is stored on servers.",
+    "privacy_turn": "Messages are end-to-end encrypted via a relay server. The relay cannot read your messages.",
+    "privacy_relay": "Messages are routed through a server in this session. The server can technically read message content.",
+    "privacy_connecting": "Establishing secure connection..."
+  },
+  "home": {
+    "create": "Create Room",
+    "create_as": "Create Room as {nick}",
+    "join_as": "Join as {nick}",
+    "join_placeholder": "Enter Key",
+    "join_btn": "Enter",
+    "or": "or",
+    "nickname_label": "Your nickname",
+    "randomize": "Randomize nickname",
+    "key_required": "Please enter a room key"
+  },
+  "room": {
+    "copied": "Link copied",
+    "switch_warning": "Leaving room {key} will clear all messages from your device. This cannot be undone.",
+    "nickname_label": "Your nickname",
+    "nickname_hint": "Press 🎲 for a random nickname",
+    "input_placeholder": "Type a message...",
+    "join_as": "Join as {nick}",
+    "create_as": "Create as {nick}"
+  },
+  "system": {
+    "join": "{name} joined the room",
+    "leave": "{name} left the room",
+    "kick": "{kicker} removed {kicked} from the room",
+    "reconnecting": "Reconnecting...",
+    "reconnected": "Reconnected",
+    "new_chair": "{name} is now the chairperson",
+    "room_ended": "The session has been ended by the chairperson."
+  },
+  "chair": {
+    "kick_confirm": "Remove {name} from the room?",
+    "end_confirm": "End the session? All messages will be lost immediately.",
+    "kicked_notice": "You have been removed from the room.",
+    "end_room": "End Room"
+  },
+  "forward": {
+    "title": "{name} forwarded {count} message(s)",
+    "note_placeholder": "Add a note (optional)",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "select_all": "Select all",
+    "confirm": "Forward",
+    "cancel": "Cancel"
+  },
+  "nickname": {
+    "title": "Choose your nickname",
+    "enter": "Enter Room"
+  },
+  "msg": {
+    "resend":          "Delivery failed — click to resend",
+    "resend_disabled": "Network error, reconnecting…"
+  },
+  "conn": {
+    "connecting":       "Connecting…",
+    "p2p":              "Direct P2P",
+    "turn":             "TURN Relay",
+    "relay":            "Server Relay",
+    "failed":           "Connection Failed",
+    "connecting_tech":  "Establishing WebRTC…",
+    "p2p_tech":         "ICE: host/srflx — DataChannel direct",
+    "turn_tech":        "ICE: relay — DataChannel via TURN (E2E encrypted)",
+    "relay_tech":       "WS relay — messages via signaling server (plaintext)",
+    "failed_tech":      "WebRTC & relay both unavailable",
+    "turn_toast":       "Your connection uses a relay server. Messages remain end-to-end encrypted.",
+    "turn_toast_tech":  "TURN relay active. DTLS encryption intact; relay server cannot read content.",
+    "relay_toast":      "Server relay is active. The server can see message content in this session.",
+    "relay_toast_tech": "WS relay mode: messages pass as plaintext JSON through the signaling server.",
+    "relay_confirm_title": "Continue with Server Relay?",
+    "relay_confirm_body": "Your direct connection failed. To keep chatting, messages will be routed through our server.\n\nThe server can technically read message content when relay is used. It is best if all devices are on the same Wi-Fi or local network.\n\nContinue with server relay?",
+    "relay_confirm_body_tech": "P2P DataChannel unavailable (likely CGNAT/symmetric NAT). WS relay fallback will forward messages as plaintext JSON through the signaling server. The server operator can inspect message content.\n\nRecommendation: ensure all peers are on the same LAN or use a properly configured TURN server.",
+    "relay_confirm_ok":     "Continue with Relay",
+    "relay_confirm_cancel": "Disconnect",
+    "tech_mode_label":  "Technical view"
+  },
+  "admin": {
+    "token_prompt": "Enter admin token",
+    "token_label": "Admin Token",
+    "rooms_title": "Active Rooms",
+    "col_key": "Key",
+    "col_created": "Created",
+    "col_status": "Status",
+    "col_action": "Action",
+    "status_active": "Active",
+    "status_banned": "Banned",
+    "logs_title": "Probe Logs",
+    "ban_title": "Ban List",
+    "col_ip": "IP",
+    "col_time": "Time",
+    "col_to_key": "Key",
+    "col_action_type": "Action",
+    "col_blocked": "Blocked"
+  },
+  "error": {
+    "room_not_found": "Room {key} does not exist.",
+    "create_prompt": "Create and enter",
+    "connection_failed": "Connection failed. Please refresh.",
+    "room_banned": "This room has been closed."
+  }
+}
+

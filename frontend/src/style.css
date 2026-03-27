@@ -1,0 +1,112 @@
+:root {
+  --dc-bg: #1A1A1A;
+  --dc-panel: #242424;
+  --dc-gold: #C9A84C;
+  --dc-gray: #6B6B6B;
+  --dc-orange: #C4784A;
+  --dc-red: #A63C3C;
+  --dc-teal: #4A9B8E;
+  --dc-blue: #5B8DB8;
+  --dc-text: #E8E3D9;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #app {
+  height: 100%;
+  background: var(--dc-bg);
+  color: var(--dc-text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+}
+
+/* Tiptap editor */
+.tiptap {
+  outline: none;
+  min-height: 60px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px 12px;
+  color: var(--dc-text);
+  line-height: 1.6;
+  font-size: 0.95rem;
+}
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--dc-gray);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+.tiptap pre {
+  background: #111;
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 0.85em;
+}
+.tiptap code { font-family: 'JetBrains Mono', monospace; }
+.tiptap code:not(pre code) {
+  background: #333;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.87em;
+}
+.tiptap blockquote {
+  border-left: 3px solid var(--dc-gold);
+  padding-left: 12px;
+  color: var(--dc-gray);
+  margin: 4px 0;
+}
+.tiptap a { color: var(--dc-blue); text-underline-offset: 3px; }
+.tiptap img { max-width: 100%; border-radius: 8px; cursor: zoom-in; }
+.tiptap ul, .tiptap ol { padding-left: 20px; }
+.tiptap p { margin: 2px 0; }
+
+/* System message */
+.sys-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dc-gray);
+  font-size: 0.77rem;
+  padding: 6px 0;
+  user-select: none;
+}
+.sys-msg::before,
+.sys-msg::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--dc-gray);
+  opacity: 0.25;
+}
+
+/* Privacy bar */
+.privacy-bar {
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--dc-gray);
+  padding: 6px 16px;
+  background: var(--dc-bg);
+  border-top: 1px solid #2a2a2a;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 2px; }
+
+/* Global button glow */
+.v-btn:not(.v-btn--icon) {
+  box-shadow: 0 0 6px rgba(201, 168, 76, 0.22) !important;
+  transition: box-shadow 0.2s ease !important;
+}
+.v-btn:not(.v-btn--icon):hover {
+  box-shadow: 0 0 14px rgba(201, 168, 76, 0.50) !important;
+}
+.v-btn--icon {
+  box-shadow: none !important;
+}
