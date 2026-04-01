@@ -76,7 +76,11 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       // 2. Detect ICE connection type (p2p vs turn)
       const type = await rtc.detectConnectionType(peerId)
       if (connStore.state !== 'relay') {
-        connStore.state = type
+        if (connStore.state === 'p2p' || type === 'p2p') {
+          connStore.state = 'p2p'
+        } else {
+          connStore.state = type
+        }
       }
       // 3. If center, broadcast member's connection type to all
       if (roomStore.isCenter) {
@@ -163,11 +167,14 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       }
 
       case 'member_conn': {
+        const hadConnType = roomStore.members.find(m => m.clientId === msg.clientId)?.connType
         roomStore.updateMemberConn(msg.clientId, msg.connType)
-        const member = roomStore.members.find(m => m.clientId === msg.clientId)
-        if (member) {
-          const connTypeText = msg.connType === 'p2p' ? 'P2P' : msg.connType === 'turn' ? 'TURN' : 'Relay'
-          addSystemMessage('system.join', { name: member.nickname, connType: connTypeText })
+        if (!hadConnType) {
+          const member = roomStore.members.find(m => m.clientId === msg.clientId)
+          if (member) {
+            const connTypeText = msg.connType === 'p2p' ? 'P2P' : msg.connType === 'turn' ? 'TURN' : 'Relay'
+            addSystemMessage('system.join', { name: member.nickname, connType: connTypeText })
+          }
         }
         break
       }

@@ -14,7 +14,7 @@ export const useConnectionStore = defineStore('connection', () => {
   const icon = computed<string>(() => ({
     connecting: 'mdi-dots-horizontal-circle-outline',
     p2p:        'mdi-lan-connect',
-    turn:       'mdi-shield-network-outline',
+    turn:       'mdi-shield-lock-outline',
     relay:      'mdi-server-network',
     failed:     'mdi-alert-circle-outline',
   }[state.value]))

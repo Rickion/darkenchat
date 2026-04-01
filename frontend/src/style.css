@@ -94,6 +94,13 @@ html, body, #app {
   flex-shrink: 0;
 }
 
+/* Mobile: add safe area padding */
+@media (max-width: 767px) {
+  .privacy-bar {
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+  }
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

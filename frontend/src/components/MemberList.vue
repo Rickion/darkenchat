@@ -36,13 +36,18 @@ const emit = defineEmits<{
       </span>
 
       <!-- Connection type icon -->
-      <v-icon
-        v-if="m.connType"
-        :icon="m.connType === 'p2p' ? 'mdi-lan-connect' : m.connType === 'turn' ? 'mdi-shield-lock-outline' : 'mdi-server-network'"
-        :color="m.connType === 'p2p' ? '#4CAF50' : m.connType === 'turn' ? '#FFC107' : '#FF7043'"
-        size="14"
-        class="conn-icon"
-      />
+      <v-tooltip v-if="m.connType" location="top">
+        <template #activator="{ props: tp }">
+          <v-icon
+            v-bind="tp"
+            :icon="m.connType === 'p2p' ? 'mdi-lan-connect' : m.connType === 'turn' ? 'mdi-shield-lock-outline' : 'mdi-server-network'"
+            :color="m.connType === 'p2p' ? '#4CAF50' : m.connType === 'turn' ? '#FFC107' : '#FF7043'"
+            size="14"
+            class="conn-icon"
+          />
+        </template>
+        {{ m.connType === 'p2p' ? 'Direct P2P' : m.connType === 'turn' ? 'TURN Relay' : 'Server Relay' }}
+      </v-tooltip>
 
       <!-- Chair kick button -->
       <v-btn
