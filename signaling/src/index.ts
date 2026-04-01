@@ -268,6 +268,14 @@ app.register(async (fastify) => {
           break
         }
 
+        case 'member_conn': {
+          if (!currentRoomKey) return
+          const room = rooms.get(currentRoomKey)
+          if (!room) return
+          broadcast(room, { type: 'member_conn', clientId: msg.clientId, connType: msg.connType })
+          break
+        }
+
         case 'kick': {
           if (!currentRoomKey || !currentClientId) return
           const room = rooms.get(currentRoomKey)

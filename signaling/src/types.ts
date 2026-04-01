@@ -28,11 +28,12 @@ export interface SwitchLog {
 }
 
 export type C2S =
-  | { type: 'join';       roomKey: string; nickname: string; isBot?: boolean; lastClientId?: string }
-  | { type: 'leave';      roomKey: string }
-  | { type: 'signal';     roomKey: string; to: string; payload: unknown }
-  | { type: 'score';      roomKey: string; score: number }
-  | { type: 'relay';      to: string; data: string }
+  | { type: 'join';        roomKey: string; nickname: string; isBot?: boolean; lastClientId?: string }
+  | { type: 'leave';       roomKey: string }
+  | { type: 'signal';      roomKey: string; to: string; payload: unknown }
+  | { type: 'score';       roomKey: string; score: number }
+  | { type: 'relay';       to: string; data: string }
+  | { type: 'member_conn'; clientId: string; connType: 'p2p' | 'turn' | 'relay' }
   | { type: 'heartbeat' }
-  | { type: 'kick';       roomKey: string; targetId: string }
-  | { type: 'end_room';   roomKey: string }
+  | { type: 'kick';        roomKey: string; targetId: string }
+  | { type: 'end_room';    roomKey: string }

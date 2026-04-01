@@ -78,6 +78,10 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       if (connStore.state !== 'relay') {
         connStore.state = type
       }
+      // 3. If center, broadcast member's connection type to all
+      if (roomStore.isCenter) {
+        signaling.send({ type: 'member_conn' as never, clientId: peerId, connType: type } as never)
+      }
     },
     // onChannelClose: DataChannel closed, trigger relay fallback if needed
     (peerId) => {
@@ -156,6 +160,11 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       case 'new_chair': {
         roomStore.updateChair(msg.chairId)
         addSystemMessage('system.new_chair', { name: msg.nickname })
+        break
+      }
+
+      case 'member_conn': {
+        roomStore.updateMemberConn(msg.clientId, msg.connType)
         break
       }
 

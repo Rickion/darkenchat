@@ -65,6 +65,11 @@ export const useRoomStore = defineStore('room', () => {
     chairId.value = newChairId
   }
 
+  function updateMemberConn(clientId: string, connType: 'p2p' | 'turn' | 'relay') {
+    const member = members.value.find(m => m.clientId === clientId)
+    if (member) member.connType = connType
+  }
+
   function reset() {
     key.value = ''
     clientId.value = ''
@@ -82,6 +87,6 @@ export const useRoomStore = defineStore('room', () => {
     key, clientId, nickname, centerId, chairId,
     nicknameSet, members, connected, reconnecting,
     isChair, isCenter, chairMember, usedNicknames,
-    setRoom, addMember, removeMember, updateCenter, updateChair, reset,
+    setRoom, addMember, removeMember, updateCenter, updateChair, updateMemberConn, reset,
   }
 })
