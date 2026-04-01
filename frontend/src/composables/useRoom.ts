@@ -264,6 +264,11 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         if (creds.urls?.length) turnStore.setServerConfig(creds)
       }
 
+      // Auto-select Metered if: enabled + no custom + no server TURN
+      if (turnStore.meteredEnabled && !turnStore.useCustom && !turnStore.serverConfig) {
+        turnStore.useMetered = true
+      }
+
       // Apply TURN config: Metered > custom > server
       if (turnStore.useMetered && turnStore.meteredApiUrl) {
         const meteredIce = await fetch(turnStore.meteredApiUrl).then(r => r.json()).catch(() => null)

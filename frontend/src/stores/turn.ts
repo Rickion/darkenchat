@@ -75,10 +75,6 @@ export const useTurnStore = defineStore('turn', () => {
   function setMeteredConfig(enabled: boolean, apiUrl: string) {
     meteredEnabled.value = enabled
     meteredApiUrl.value = apiUrl
-    // Auto-select Metered if no custom config and server has no TURN
-    if (enabled && !useCustom.value && !serverConfig.value) {
-      useMetered.value = true
-    }
   }
 
   function reset() {
