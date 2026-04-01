@@ -203,12 +203,12 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       signaling.send({ type: 'relay', to: memberId, data: raw })
       return true
     }
-    if (relayEnabled === null) {
+    if (relayEnabled === null && !roomStore.isCenter) {
       relayQueue.push([memberId, raw])
       onEvent({ event: 'relay_request' })
-      return true  // optimistic: queued pending user confirmation
+      return true
     }
-    return false   // relay declined, no delivery path
+    return false
   }
 
   // ──────────────────────────────────────────────

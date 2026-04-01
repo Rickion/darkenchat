@@ -100,15 +100,15 @@ const systemText = computed(() => {
             location="top"
           >
             <template #activator="{ props: tp }">
-              <v-btn
-                icon="mdi-alert-circle-outline"
-                size="x-small"
-                variant="text"
+              <v-icon
+                size="16"
                 :color="reconnecting ? 'grey' : 'error'"
-                :style="{ opacity: reconnecting ? 0.5 : 1 }"
+                :style="{ opacity: reconnecting ? 0.5 : 1, cursor: reconnecting ? 'default' : 'pointer' }"
                 v-bind="tp"
                 @click.stop="!reconnecting && emit('resend', message.id)"
-              />
+              >
+                mdi-alert-circle-outline
+              </v-icon>
             </template>
           </v-tooltip>
         </template>

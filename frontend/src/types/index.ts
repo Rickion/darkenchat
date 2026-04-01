@@ -53,6 +53,7 @@ export type S2C =
   | { type: 'room_ended' }
   | { type: 'room_banned' }
   | { type: 'error';       code: string }
+  | { type: 'ack' }
 
 export interface RTCSignal {
   sdp?: RTCSessionDescriptionInit

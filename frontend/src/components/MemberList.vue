@@ -38,7 +38,7 @@ const emit = defineEmits<{
       <!-- Connection type icon -->
       <v-icon
         v-if="m.connType"
-        :icon="m.connType === 'p2p' ? 'mdi-lan-connect' : m.connType === 'turn' ? 'mdi-shield-network-outline' : 'mdi-server-network'"
+        :icon="m.connType === 'p2p' ? 'mdi-lan-connect' : m.connType === 'turn' ? 'mdi-shield-lock-outline' : 'mdi-server-network'"
         :color="m.connType === 'p2p' ? '#4CAF50' : m.connType === 'turn' ? '#FFC107' : '#FF7043'"
         size="14"
         class="conn-icon"

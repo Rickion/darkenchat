@@ -27,7 +27,7 @@
     "create_as": "Create as {nick}"
   },
   "system": {
-    "join": "{name} joined the room ({connType})",
+    "join": "{name} joined the room",
     "leave": "{name} left the room",
     "kick": "{kicker} removed {kicked} from the room",
     "reconnecting": "Reconnecting...",

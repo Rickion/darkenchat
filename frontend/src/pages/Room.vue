@@ -70,12 +70,18 @@ const { join, leave, sendMessage, sendForward, resendMessage, confirmRelay, sign
   if (e.event === 'connection_failed') { connectionFailed.value = true }
   if (e.event === 'relay_request')     { showRelayConfirm.value = true }
   if (e.event === 'relay_active') {
-    // Relay became active from incoming message — show non-blocking toast
     showSnackbar(
       connStore.techMode ? t('conn.relay_toast_tech') : t('conn.relay_toast'),
       'warning',
       6000,
     )
+  }
+})
+
+// Watch for WebSocket disconnection
+watch(() => signaling.disconnected.value, (disconnected) => {
+  if (disconnected) {
+    showSnackbar('Connection lost. Please refresh the page.', 'error', 0)
   }
 })
 
@@ -431,13 +437,13 @@ const sidebarOpen = ref(false)
             <v-icon :style="{ color: connStore.color }">{{ connStore.icon }}</v-icon>
             {{ t('conn.' + connStore.state) }}
           </v-card-title>
-          <v-card-text class="px-6 pb-1">
+          <v-card-text class="px-6 pb-4">
             {{ connStore.techMode ? t('conn.' + connStore.state + '_tech') : t('conn.' + connStore.state) }}
           </v-card-text>
 
           <!-- TURN server settings -->
-          <v-divider class="mx-6 mt-3" />
-          <v-card-text class="px-6 pt-3 pb-1">
+          <v-divider class="mx-6 mt-4" />
+          <v-card-text class="px-6 pt-4 pb-2">
             <div class="text-caption mb-2" style="color: var(--dc-gray); text-transform: uppercase; letter-spacing: .05em">TURN Server</div>
 
             <!-- Metered.ca built-in option -->
@@ -448,7 +454,7 @@ const sidebarOpen = ref(false)
                 density="compact"
                 hide-details
                 color="primary"
-                class="mb-3"
+                class="mb-4"
               />
             </template>
 
@@ -505,8 +511,8 @@ const sidebarOpen = ref(false)
             />
           </v-card-text>
 
-          <v-divider class="mx-6 mt-2" />
-          <v-card-text class="px-6 pt-3 pb-4">
+          <v-divider class="mx-6 mt-4" />
+          <v-card-text class="px-6 pt-4 pb-4">
             <v-switch
               v-model="connStore.techMode"
               :label="t('conn.tech_mode_label')"
@@ -528,10 +534,10 @@ const sidebarOpen = ref(false)
             <v-icon color="warning">mdi-server-network</v-icon>
             {{ t('conn.relay_confirm_title') }}
           </v-card-title>
-          <v-card-text class="px-6 pb-2" style="white-space: pre-line">
+          <v-card-text class="px-6 pb-4" style="white-space: pre-line">
             {{ connStore.techMode ? t('conn.relay_confirm_body_tech') : t('conn.relay_confirm_body') }}
           </v-card-text>
-          <v-card-text class="px-6 pt-0 pb-3 text-caption">
+          <v-card-text class="px-6 pt-0 pb-4 text-caption">
             <v-switch
               v-model="connStore.techMode"
               :label="t('conn.tech_mode_label')"
@@ -550,10 +556,10 @@ const sidebarOpen = ref(false)
       <!-- Kick confirm -->
       <v-dialog v-model="showKickConfirm" max-width="380">
         <v-card color="surface">
-          <v-card-text class="pt-4">
+          <v-card-text class="pt-6 px-6 pb-4">
             {{ t('chair.kick_confirm', { name: kickTarget?.nickname ?? '' }) }}
           </v-card-text>
-          <v-card-actions class="justify-end gap-2 pb-4 px-4">
+          <v-card-actions class="justify-end gap-2 pb-5 px-6">
             <v-btn variant="text" @click="showKickConfirm = false">{{ t('forward.cancel') }}</v-btn>
             <v-btn color="error" @click="confirmKick">Remove</v-btn>
           </v-card-actions>
