@@ -129,7 +129,6 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         if (roomStore.isCenter && !msg.member.isBot) {
           rtc.createPeer(msg.member.clientId, false /* impolite, creates channel */)
         }
-        addSystemMessage('system.join', { name: msg.member.nickname })
         break
       }
 
@@ -165,6 +164,11 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
 
       case 'member_conn': {
         roomStore.updateMemberConn(msg.clientId, msg.connType)
+        const member = roomStore.members.find(m => m.clientId === msg.clientId)
+        if (member) {
+          const connTypeText = msg.connType === 'p2p' ? 'P2P' : msg.connType === 'turn' ? 'TURN' : 'Relay'
+          addSystemMessage('system.join', { name: member.nickname, connType: connTypeText })
+        }
         break
       }
 

@@ -6,7 +6,7 @@ type MessageHandler = (msg: S2C) => void
 const proto = location.protocol === 'https:' ? 'wss' : 'ws'
 const WS_URL = import.meta.env.VITE_WS_URL ?? `${proto}://${location.host}/ws`
 const HEARTBEAT_MS = 3000
-const HEARTBEAT_TIMEOUT_MS = 10000
+const HEARTBEAT_TIMEOUT_MS = 3000
 
 export function useSignaling(onMessage: MessageHandler) {
   const ws = ref<WebSocket | null>(null)
