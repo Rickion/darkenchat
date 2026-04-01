@@ -92,6 +92,17 @@ ice:
     credential: "${TURN_CREDENTIAL}"
 ```
 
+**Or use Metered.ca built-in TURN provider:**
+
+```yaml
+ice:
+  metered:
+    enabled: true
+    api_url: "${TURN_METERED_API}"
+```
+
+Get your Metered API URL from [dashboard.metered.ca](https://dashboard.metered.ca/) → Your Project → API Credentials.
+
 ### 2. Set the admin token
 
 The admin token protects the `/api/admin/*` endpoints. Set it via environment variable — **do not hardcode it in config.yaml**.

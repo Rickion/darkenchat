@@ -51,6 +51,10 @@ const TURN_USERNAME   = process.env.TURN_USERNAME   ?? ''
 const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL ?? ''
 const TURN_TTL        = cfg?.ice?.turn?.ttl_seconds ?? 3600
 
+// Metered.ca built-in TURN provider
+const METERED_ENABLED = process.env.TURN_METERED_ENABLED === 'true' || cfg?.ice?.metered?.enabled === true
+const METERED_API     = process.env.TURN_METERED_API ?? cfg?.ice?.metered?.api_url ?? ''
+
 configureGuard({
   windowSeconds:     cfg?.security?.rate_limit?.window_seconds     ?? 60,
   maxKeyProbes:      cfg?.security?.rate_limit?.max_key_probes      ?? 10,
@@ -143,6 +147,14 @@ app.get('/api/turn-credentials', async (req, reply) => {
 
   // URLs configured but no auth — return URLs with empty creds (some servers allow no-auth)
   return reply.send({ urls: TURN_URLS, username: '', credential: '' })
+})
+
+// ─── Metered.ca built-in TURN provider ───────────────────────
+app.get('/api/turn-metered', async (req, reply) => {
+  if (!METERED_ENABLED || !METERED_API) {
+    return reply.status(503).send({ error: 'Metered not configured' })
+  }
+  return reply.send({ enabled: true, apiUrl: METERED_API })
 })
 
 // ─── WebSocket ────────────────────────────────────────────

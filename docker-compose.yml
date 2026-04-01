@@ -23,6 +23,11 @@ services:
       # Auth mode B — Static credentials (alternative to HMAC, set BOTH or neither):
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+
+      # Built-in Metered.ca TURN provider (optional):
+      #   Get API URL from https://dashboard.metered.ca/
+      TURN_METERED_ENABLED: ${TURN_METERED_ENABLED:-false}
+      TURN_METERED_API: ${TURN_METERED_API:-}
       # ───────────────────────────────────────────────────────────────────
 
     # volumes:

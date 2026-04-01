@@ -23,6 +23,10 @@ ice:
     urls: []          # override with TURN_URLS env var (comma-separated)
     auth_secret: "${TURN_SECRET}"
     ttl_seconds: 3600
+  # Built-in TURN providers (optional)
+  metered:
+    enabled: false    # override with TURN_METERED_ENABLED env var
+    api_url: "${TURN_METERED_API}"
 
 security:
   admin_token: "${ADMIN_TOKEN}"

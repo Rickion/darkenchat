@@ -440,8 +440,20 @@ const sidebarOpen = ref(false)
           <v-card-text class="px-6 pt-3 pb-1">
             <div class="text-caption mb-2" style="color: var(--dc-gray); text-transform: uppercase; letter-spacing: .05em">TURN Server</div>
 
+            <!-- Metered.ca built-in option -->
+            <template v-if="turnStore.meteredEnabled && !turnStore.useCustom">
+              <v-switch
+                v-model="turnStore.useMetered"
+                label="Use built-in TURN (Metered.ca)"
+                density="compact"
+                hide-details
+                color="primary"
+                class="mb-3"
+              />
+            </template>
+
             <!-- No custom: show server default info -->
-            <template v-if="!turnStore.useCustom">
+            <template v-if="!turnStore.useCustom && !turnStore.useMetered">
               <div v-if="turnStore.serverUrl" class="text-body-2 mb-1">
                 <v-icon size="14" class="mr-1" color="success">mdi-check-circle-outline</v-icon>
                 {{ turnStore.serverUrl }}
@@ -461,7 +473,7 @@ const sidebarOpen = ref(false)
                 :placeholder="turnStore.serverUrl || 'turn:your-server.com:3478'"
                 density="compact"
                 hide-details
-                class="mb-2"
+                class="mb-3"
               />
               <div class="d-flex gap-2">
                 <v-text-field
@@ -480,7 +492,7 @@ const sidebarOpen = ref(false)
                   style="flex: 1"
                 />
               </div>
-              <div class="text-caption mt-2" style="color: var(--dc-gray)">Changes apply when joining the next room.</div>
+              <div class="text-caption mt-3" style="color: var(--dc-gray)">Changes apply when joining the next room.</div>
             </template>
 
             <v-switch
@@ -489,7 +501,7 @@ const sidebarOpen = ref(false)
               density="compact"
               hide-details
               color="primary"
-              class="mt-3"
+              class="mt-4"
             />
           </v-card-text>
 

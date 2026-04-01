@@ -250,14 +250,28 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     turnStore.reset()
 
     try {
+      // Fetch Metered config
+      const meteredRes = await fetch('/api/turn-metered').catch(() => null)
+      if (meteredRes?.ok) {
+        const metered = await meteredRes.json()
+        if (metered.enabled) turnStore.setMeteredConfig(true, metered.apiUrl)
+      }
+
+      // Fetch self-hosted TURN credentials
       const turnRes = await fetch('/api/turn-credentials').catch(() => null)
       if (turnRes?.ok) {
         const creds = await turnRes.json()
         if (creds.urls?.length) turnStore.setServerConfig(creds)
       }
 
-      const turn = turnStore.effective
-      if (turn) rtc.setTurnServers([turn as RTCIceServer])
+      // Apply TURN config: Metered > custom > server
+      if (turnStore.useMetered && turnStore.meteredApiUrl) {
+        const meteredIce = await fetch(turnStore.meteredApiUrl).then(r => r.json()).catch(() => null)
+        if (meteredIce) rtc.setTurnServers(meteredIce)
+      } else {
+        const turn = turnStore.effective
+        if (turn) rtc.setTurnServers([turn as RTCIceServer])
+      }
 
       await signaling.connect()
       signaling.send({ type: 'join', roomKey: key, nickname })
