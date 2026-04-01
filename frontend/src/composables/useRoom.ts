@@ -254,28 +254,41 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       const meteredRes = await fetch('/api/turn-metered').catch(() => null)
       if (meteredRes?.ok) {
         const metered = await meteredRes.json()
-        if (metered.enabled) turnStore.setMeteredConfig(true, metered.apiUrl)
+        if (metered.enabled) {
+          console.log('[turn] Metered available:', metered.apiUrl)
+          turnStore.setMeteredConfig(true, metered.apiUrl)
+        }
       }
 
       // Fetch self-hosted TURN credentials
       const turnRes = await fetch('/api/turn-credentials').catch(() => null)
       if (turnRes?.ok) {
         const creds = await turnRes.json()
-        if (creds.urls?.length) turnStore.setServerConfig(creds)
+        if (creds.urls?.length) {
+          console.log('[turn] Server TURN:', creds.urls)
+          turnStore.setServerConfig(creds)
+        }
       }
 
       // Auto-select Metered if: enabled + no custom + no server TURN
       if (turnStore.meteredEnabled && !turnStore.useCustom && !turnStore.serverConfig) {
+        console.log('[turn] Auto-selecting Metered')
         turnStore.useMetered = true
       }
 
       // Apply TURN config: Metered > custom > server
       if (turnStore.useMetered && turnStore.meteredApiUrl) {
         const meteredIce = await fetch(turnStore.meteredApiUrl).then(r => r.json()).catch(() => null)
-        if (meteredIce) rtc.setTurnServers(meteredIce)
+        if (meteredIce) {
+          console.log('[turn] Using Metered.ca:', meteredIce.length, 'servers')
+          rtc.setTurnServers(meteredIce)
+        }
       } else {
         const turn = turnStore.effective
-        if (turn) rtc.setTurnServers([turn as RTCIceServer])
+        if (turn) {
+          console.log('[turn] Using config:', turn.urls)
+          rtc.setTurnServers([turn as RTCIceServer])
+        }
       }
 
       await signaling.connect()
