@@ -11,9 +11,10 @@ const props = defineProps<{
   clientId: string
   selectMode?: boolean
   selected?: boolean
-  failed?: boolean       // own message — delivery failed
-  catchup?: boolean      // received as catch-up history (blink 3 s)
-  reconnecting?: boolean // network is down — disable resend
+  failed?: boolean
+  catchup?: boolean
+  reconnecting?: boolean
+  showHeader?: boolean  // false when same sender sent prev msg within same minute
 }>()
 
 const emit = defineEmits<{
@@ -23,8 +24,8 @@ const emit = defineEmits<{
 
 const expanded = ref(false)
 
-const time    = computed(() => dayjs(props.message.timestamp).format('HH:mm'))
-const isMine  = computed(() => props.message.fromId === props.clientId)
+const time   = computed(() => dayjs(props.message.timestamp).format('HH:mm'))
+const isMine = computed(() => props.message.fromId === props.clientId)
 
 const systemText = computed(() => {
   if (!props.message.isSystem) return ''
@@ -52,11 +53,7 @@ const systemText = computed(() => {
     <Transition name="accordion">
       <div v-if="expanded" class="forward-body">
         <div v-if="message.forwardOf?.note" class="forward-note">{{ message.forwardOf.note }}</div>
-        <div
-          v-for="m in message.forwardOf?.messages"
-          :key="m.id"
-          class="forward-msg"
-        >
+        <div v-for="m in message.forwardOf?.messages" :key="m.id" class="forward-msg">
           <span class="fwd-from">{{ m.isSystem ? '[System]' : m.from }}</span>
           <span class="fwd-time">{{ dayjs(m.timestamp).format('HH:mm') }}</span>
           <span class="fwd-content" v-html="m.content" />
@@ -66,99 +63,112 @@ const systemText = computed(() => {
   </div>
 
   <!-- Chat message -->
-  <div
-    v-else
-    class="chat-msg"
-    :class="{
-      mine: isMine,
-      'select-mode': selectMode,
-      'catchup-flash': catchup,
-    }"
-    @click="selectMode && emit('toggle', message.id)"
-  >
-    <v-checkbox
-      v-if="selectMode"
-      :model-value="selected"
-      hide-details
-      density="compact"
-      class="select-cb"
-      @click.stop
-      @update:model-value="emit('toggle', message.id)"
-    />
-    <div class="msg-body">
-      <div class="msg-meta">
-        <span class="msg-from" :class="{ 'text-primary': isMine }">
-          {{ message.from }}
-          <span v-if="message.isBot">🤖</span>
-        </span>
-        <span class="msg-time">{{ time }}</span>
-
-        <!-- Failed delivery indicator (own messages only) -->
-        <template v-if="failed && isMine">
-          <v-tooltip
-            :text="reconnecting ? t('msg.resend_disabled') : t('msg.resend')"
-            location="top"
-          >
-            <template #activator="{ props: tp }">
-              <v-icon
-                size="16"
-                :color="reconnecting ? 'grey' : 'error'"
-                :style="{ opacity: reconnecting ? 0.5 : 1, cursor: reconnecting ? 'default' : 'pointer' }"
-                v-bind="tp"
-                @click.stop="!reconnecting && emit('resend', message.id)"
-              >
-                mdi-alert-circle-outline
-              </v-icon>
-            </template>
-          </v-tooltip>
-        </template>
-      </div>
+  <div v-else class="chat-row" :class="{ mine: isMine }" @click="selectMode && emit('toggle', message.id)">
+    <!-- Sender name + time (only when showHeader or different sender) -->
+    <div v-if="showHeader !== false" class="msg-meta">
+      <span class="msg-from">{{ message.from }}</span>
+      <span v-if="message.isBot">🤖</span>
+      <span class="msg-time">{{ time }}</span>
+    </div>
+    <!-- Bubble with message content only -->
+    <div
+      class="chat-msg"
+      :class="{
+        mine: isMine,
+        'select-mode': selectMode,
+        'catchup-flash': catchup,
+        'no-header': showHeader === false,
+      }"
+    >
+      <v-checkbox
+        v-if="selectMode"
+        :model-value="selected"
+        hide-details
+        density="compact"
+        class="select-cb"
+        @click.stop
+        @update:model-value="emit('toggle', message.id)"
+      />
       <div class="msg-content" v-html="message.content" />
     </div>
   </div>
 </template>
 
 <style scoped>
-.chat-msg {
+/* ── Chat row: holds meta OUTSIDE + bubble INSIDE ── */
+.chat-row {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: 10px;
-  transition: background 0.1s;
-  cursor: default;
+  flex-direction: column;
+  margin: 4px 0;
+  max-width: 85%;
 }
-.chat-msg.select-mode { cursor: pointer; }
-.chat-msg.select-mode:hover { background: #2a2a2a; }
-.msg-body { flex: 1; min-width: 0; }
+.chat-row.mine {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.chat-row:not(.mine) {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+/* ── Sender name + time (outside bubble) ── */
 .msg-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 2px;
+  padding: 0 4px;
 }
-.msg-from { font-size: 0.83rem; font-weight: 600; }
-.msg-time { font-size: 0.72rem; color: var(--dc-gray); }
+.chat-row.mine .msg-meta { flex-direction: row-reverse; }
+.msg-from { font-size: 0.75rem; font-weight: 600; color: var(--dc-gold); }
+.chat-row.mine .msg-from { color: var(--dc-gray); }
+.msg-time { font-size: 0.68rem; color: var(--dc-gray); }
+
+/* ── Chat bubble (message content only) ── */
+.chat-msg {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 16px;
+  transition: background 0.1s;
+  cursor: default;
+}
+.chat-msg.mine {
+  background: var(--dc-gold);
+  border-bottom-right-radius: 4px;
+}
+.chat-msg:not(.mine) {
+  background: var(--dc-panel);
+  border-bottom-left-radius: 4px;
+}
+.chat-msg.select-mode { cursor: pointer; }
+.chat-msg.select-mode:hover { filter: brightness(1.2); }
+.chat-msg.mine.select-mode:hover { filter: brightness(0.95); }
+.chat-msg.no-header { padding-top: 4px; }
+
+.msg-body { flex: 1; min-width: 0; }
 .msg-content {
   font-size: 0.92rem;
-  line-height: 1.55;
+  line-height: 1.5;
   word-break: break-word;
 }
-.msg-content :deep(strong) { color: var(--dc-text); }
+.chat-msg.mine .msg-content { color: #1A1A1A; }
+.chat-msg:not(.mine) .msg-content { color: var(--dc-text); }
+.msg-content :deep(strong) { color: inherit; }
 .msg-content :deep(a) { color: var(--dc-blue); }
-.msg-content :deep(img) { max-width: min(400px, 100%); border-radius: 8px; }
+.chat-msg.mine .msg-content :deep(a) { color: #1A1A1A; text-decoration: underline; }
+.msg-content :deep(img) { max-width: min(280px, 100%); border-radius: 8px; }
 
-/* ── Catch-up flash: blinks gold for 3 s on arrival ── */
+/* ── Catch-up flash ── */
 @keyframes catchup-flash {
   0%         { background: transparent; }
   10%, 40%   { background: rgba(201, 168, 76, 0.22); }
   70%, 100%  { background: transparent; }
 }
-.catchup-flash {
-  animation: catchup-flash 3s ease-out 1;
-}
+.catchup-flash { animation: catchup-flash 3s ease-out 1; }
 
-/* Forward card */
+/* ── Forward card ── */
 .forward-card {
   background: var(--dc-panel);
   border: 1px solid #333;

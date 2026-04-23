@@ -11,6 +11,7 @@
     "create_as": "Create Room as {nick}",
     "join_as": "Join as {nick}",
     "join_placeholder": "Enter Key",
+    "join": "Join",
     "join_btn": "Enter",
     "or": "or",
     "nickname_label": "Your nickname",

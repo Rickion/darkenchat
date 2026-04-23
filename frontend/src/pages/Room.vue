@@ -78,6 +78,17 @@ const { join, leave, sendMessage, sendForward, resendMessage, confirmRelay, sign
   }
 })
 
+// Helper: show header only when sender changes or time minute changes
+function shouldShowHeader(messages: Message[], index: number): boolean {
+  if (index === 0) return true
+  const curr = messages[index]
+  const prev = messages[index - 1]
+  if (curr.fromId !== prev.fromId) return true
+  const currMinute = Math.floor(curr.timestamp / 60000)
+  const prevMinute = Math.floor(prev.timestamp / 60000)
+  return currMinute !== prevMinute
+}
+
 // Watch for WebSocket disconnection
 watch(() => signaling.disconnected.value, (disconnected) => {
   if (disconnected) {
@@ -369,13 +380,14 @@ const sidebarOpen = ref(false)
         <div class="room-main">
           <div v-if="!showForward" ref="msgListEl" class="msg-list">
             <MessageItem
-              v-for="m in msgStore.messages"
+              v-for="(m, i) in msgStore.messages"
               :key="m.id"
               :message="m"
               :client-id="roomStore.clientId"
               :failed="msgStore.failedIds.has(m.id)"
               :catchup="msgStore.catchupIds.has(m.id)"
               :reconnecting="roomStore.reconnecting"
+              :show-header="shouldShowHeader(msgStore.messages, i)"
               @resend="resendMessage($event)"
             />
           </div>
@@ -432,7 +444,7 @@ const sidebarOpen = ref(false)
 
       <!-- Connection detail panel -->
       <v-dialog v-model="showConnDetail" max-width="460">
-        <v-card color="surface">
+        <v-card id="conn-detail-panel" color="surface" style="padding: 20px;" class="pa-5">
           <v-card-title class="pt-5 px-6 d-flex align-center gap-2">
             <v-icon :style="{ color: connStore.color }">{{ connStore.icon }}</v-icon>
             {{ t('conn.' + connStore.state) }}
@@ -454,7 +466,7 @@ const sidebarOpen = ref(false)
                 density="compact"
                 hide-details
                 color="primary"
-                class="mb-4"
+                class="mb-4" style="margin-left: 16px; margin-right: 80px; width: fit-content;"
               />
             </template>
 
@@ -473,41 +485,49 @@ const sidebarOpen = ref(false)
 
             <!-- Custom TURN fields -->
             <template v-if="turnStore.useCustom">
+              <v-switch
+                v-model="turnStore.useCustom"
+                label="Use custom TURN server"
+                density="compact"
+                hide-details
+                color="primary"
+                class="mb-3" style="margin-left: 16px; margin-right: 80px; width: fit-content;"
+              />
               <v-text-field
                 v-model="turnStore.customUrl"
                 label="TURN URL"
                 :placeholder="turnStore.serverUrl || 'turn:your-server.com:3478'"
                 density="compact"
                 hide-details
-                class="mb-3"
+                class="mt-4"
+                style="margin-bottom: 20px;"
               />
-              <div class="d-flex gap-2">
-                <v-text-field
-                  v-model="turnStore.customUsername"
-                  label="Username"
-                  density="compact"
-                  hide-details
-                  style="flex: 1"
-                />
-                <v-text-field
-                  v-model="turnStore.customCredential"
-                  label="Credential"
-                  type="password"
-                  density="compact"
-                  hide-details
-                  style="flex: 1"
-                />
-              </div>
+              <v-text-field
+                v-model="turnStore.customUsername"
+                label="Username"
+                density="compact"
+                hide-details
+                style="margin-bottom: 20px;"
+              />
+              <v-text-field
+                v-model="turnStore.customCredential"
+                label="Credential"
+                type="password"
+                density="compact"
+                hide-details
+                style="margin-bottom: 20px;"
+              />
               <div class="text-caption mt-3" style="color: var(--dc-gray)">Changes apply when joining the next room.</div>
             </template>
 
             <v-switch
+              v-if="!turnStore.useCustom"
               v-model="turnStore.useCustom"
               label="Use custom TURN server"
               density="compact"
               hide-details
               color="primary"
-              class="mt-4"
+              class="mt-4" style="margin-left: 16px; margin-right: 80px; width: fit-content;"
             />
           </v-card-text>
 
@@ -519,6 +539,7 @@ const sidebarOpen = ref(false)
               density="compact"
               hide-details
               color="primary"
+              style="margin-left: 16px; margin-right: 80px; width: fit-content;"
             />
           </v-card-text>
           <v-card-actions class="justify-end px-6 pb-5">
@@ -798,5 +819,10 @@ const sidebarOpen = ref(false)
   top: 6px;
   right: 6px;
   z-index: 1;
+}
+
+/* Connection dialog switch label spacing */
+#conn-detail-panel :deep(.v-switch) .v-label {
+  margin-left: 12px;
 }
 </style>
