@@ -65,26 +65,28 @@ function enterRoom() {
       @click="createRoom"
     >
       <div class="side-content">
-        <div class="icon-circle">+</div>
+        <div class="icon-circle"><v-icon size="28" color="#1A1A1A">mdi-plus</v-icon></div>
         <span class="side-text">{{ t('home.create_as', { nick: nickname || '…' }) }}</span>
       </div>
     </div>
 
-    <!-- Diagonal divider with nickname input -->
+    <!-- Diagonal divider -->
     <div class="divider-wrapper">
       <div class="divider-line" :class="{ 'left-active': leftHovered, 'right-active': rightHovered }"></div>
-      <div class="nickname-float">
-        <v-text-field
-          v-model="nickname"
-          :label="t('home.nickname_label')"
-          maxlength="24"
-          density="compact"
-          hide-details
-          class="nick-input"
-          @update:model-value="onNicknameInput"
-        />
-        <v-btn icon="mdi-dice-multiple" variant="text" size="x-small" :title="t('home.randomize')" @click="randomize" />
-      </div>
+    </div>
+
+    <!-- Nickname input (centered, works on both desktop and mobile) -->
+    <div class="nickname-float">
+      <v-text-field
+        v-model="nickname"
+        :label="t('home.nickname_label')"
+        maxlength="24"
+        density="compact"
+        hide-details
+        class="nick-input"
+        @update:model-value="onNicknameInput"
+      />
+      <v-btn icon="mdi-dice-multiple" variant="text" size="x-small" :title="t('home.randomize')" @click="randomize" />
     </div>
 
     <!-- Right side: Join -->
@@ -109,7 +111,7 @@ function enterRoom() {
           @click.stop
         />
         <span class="side-text">as {{ nickname || '…' }}</span>
-        <div class="icon-circle right-icon">→</div>
+        <div class="icon-circle right-icon"><v-icon size="28" color="#1A1A1A">mdi-arrow-right</v-icon></div>
       </div>
     </div>
 
@@ -141,34 +143,69 @@ function enterRoom() {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
   cursor: pointer;
+}
+
+/* Hover gradient overlay — opacity fades smoothly, unlike background-image */
+.side::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.side.hovered::before {
+  opacity: 1;
+}
+
+.side.hovered {
+  z-index: 10;
 }
 
 .left-side {
   left: 0;
-  width: 50%;
+  width: 100vw;
+  padding-right: 50vw;
   background: linear-gradient(135deg, rgba(26,26,26,0.3) 0%, rgba(26,26,26,0.1) 100%);
+  clip-path: polygon(
+    0 0,
+    calc(50vw + 28.87vh) 0,
+    calc(50vw - 28.87vh) 100%,
+    0 100%
+  );
+}
+
+.left-side::before {
+  background: linear-gradient(135deg, rgba(201,168,76,0.18) 0%, rgba(201,168,76,0.06) 100%);
 }
 
 .left-side.hovered {
-  background: linear-gradient(135deg, rgba(201,168,76,0.18) 0%, rgba(201,168,76,0.06) 100%);
-  box-shadow: 0 0 100px rgba(201,168,76,0.35), 0 0 200px rgba(201,168,76,0.15);
-  transform: translateY(-12px) scale(1.03);
-  z-index: 10;
+  /* glow handled by ::before gradient; drop-shadow removed to avoid banded halos around icons */
 }
 
 .right-side {
-  right: 0;
-  width: 50%;
+  left: 0;
+  right: auto;
+  width: 100vw;
+  padding-left: 50vw;
   background: linear-gradient(225deg, rgba(26,26,26,0.3) 0%, rgba(26,26,26,0.1) 100%);
+  clip-path: polygon(
+    calc(50vw + 28.87vh) 0,
+    100vw 0,
+    100vw 100%,
+    calc(50vw - 28.87vh) 100%
+  );
+}
+
+.right-side::before {
+  background: linear-gradient(225deg, rgba(91,141,184,0.18) 0%, rgba(91,141,184,0.06) 100%);
 }
 
 .right-side.hovered {
-  background: linear-gradient(225deg, rgba(91,141,184,0.18) 0%, rgba(91,141,184,0.06) 100%);
-  box-shadow: 0 0 100px rgba(91,141,184,0.35), 0 0 200px rgba(91,141,184,0.15);
-  transform: translateY(-12px) scale(1.03);
-  z-index: 10;
+  /* glow handled by ::before gradient; drop-shadow removed to avoid banded halos around icons */
 }
 
 /* Icon circle */
@@ -180,47 +217,60 @@ function enterRoom() {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.8rem;
-  font-weight: 400;
   color: #1A1A1A;
-  box-shadow: 0 0 30px rgba(201,168,76,0.5);
-  transition: all 0.4s ease;
+  box-shadow: 0 2px 10px rgba(201,168,76,0.3);
+  transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
   flex-shrink: 0;
 }
 
 .side.hovered .icon-circle {
-  transform: scale(1.15);
-  box-shadow: 0 0 50px rgba(201,168,76,0.8);
+  transform: scale(1.12);
+  box-shadow: 0 2px 14px rgba(201,168,76,0.45);
 }
 
 .right-icon {
   background: var(--dc-blue);
-  box-shadow: 0 0 30px rgba(91,141,184,0.5);
+  box-shadow: 0 2px 10px rgba(91,141,184,0.3);
 }
 
 .right-side.hovered .right-icon {
-  box-shadow: 0 0 50px rgba(91,141,184,0.8);
+  box-shadow: 0 2px 14px rgba(91,141,184,0.45);
 }
 
 /* Side content */
 .side-content {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 20px;
   padding: 40px;
   opacity: 0.4;
-  transition: all 0.4s ease;
+  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
 }
 
-.side.hovered .side-content {
+/* Offset content toward the center of each diagonal triangle */
+.left-side .side-content {
+  transform: translateY(-10vh);
+}
+.right-side .side-content {
+  transform: translateY(10vh);
+}
+
+.left-side.hovered .side-content {
   opacity: 1;
-  transform: scale(1.05);
+  transform: translateY(calc(-10vh - 8px)) scale(1.06);
+}
+
+.right-side.hovered .side-content {
+  opacity: 1;
+  transform: translateY(calc(10vh - 8px)) scale(1.06);
 }
 
 .side-text {
   font-size: 1rem;
   color: var(--dc-gray);
-  transition: all 0.3s ease;
+  transition: color 0.15s ease-out;
   white-space: nowrap;
 }
 
@@ -263,7 +313,7 @@ function enterRoom() {
     transparent 100%
   );
   opacity: 0.3;
-  transition: all 0.4s ease;
+  transition: opacity 0.15s ease-out, box-shadow 0.15s ease-out, background 0.15s ease-out;
   border-radius: 2px;
   position: absolute;
   left: 50%;
@@ -301,7 +351,8 @@ function enterRoom() {
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -50%) rotate(-30deg);
+  transform: translate(-50%, -50%);
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -310,7 +361,7 @@ function enterRoom() {
   border-radius: 24px;
   border: 1px solid rgba(201,168,76,0.2);
   box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-  transition: all 0.3s ease;
+  transition: border-color 0.15s ease-out, box-shadow 0.15s ease-out;
   pointer-events: auto;
   white-space: nowrap;
 }
@@ -353,25 +404,48 @@ function enterRoom() {
 /* Mobile: top/bottom split with 60deg diagonal divider */
 @media (max-width: 768px) {
   .side {
-    width: 100%;
-    height: 50%;
+    width: 100vw;
+    height: 100vh;
+    top: 0;
   }
 
   .left-side {
     top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    padding-right: 0;
+    padding-bottom: 50vh;
     background: linear-gradient(180deg, rgba(26,26,26,0.3) 0%, rgba(26,26,26,0.1) 100%);
+    clip-path: polygon(
+      0 0,
+      100vw 0,
+      100vw calc(50vh - 28.87vw),
+      0 calc(50vh + 28.87vw)
+    );
   }
 
-  .left-side.hovered {
+  .left-side::before {
     background: linear-gradient(180deg, rgba(201,168,76,0.18) 0%, rgba(201,168,76,0.06) 100%);
   }
 
   .right-side {
-    top: 50%;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    padding-left: 0;
+    padding-top: 50vh;
     background: linear-gradient(0deg, rgba(26,26,26,0.3) 0%, rgba(26,26,26,0.1) 100%);
+    clip-path: polygon(
+      0 calc(50vh + 28.87vw),
+      100vw calc(50vh - 28.87vw),
+      100vw 100vh,
+      0 100vh
+    );
   }
 
-  .right-side.hovered {
+  .right-side::before {
     background: linear-gradient(0deg, rgba(91,141,184,0.18) 0%, rgba(91,141,184,0.06) 100%);
   }
 
@@ -403,6 +477,17 @@ function enterRoom() {
     flex-direction: row;
     gap: 10px;
     padding: 16px;
+  }
+
+  /* Mobile: content already lives in its triangle via padding; reset desktop translateY */
+  .left-side .side-content,
+  .right-side .side-content {
+    transform: none;
+  }
+
+  .left-side.hovered .side-content,
+  .right-side.hovered .side-content {
+    transform: translateY(-6px) scale(1.04);
   }
 
   .side-text {

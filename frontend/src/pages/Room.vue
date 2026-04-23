@@ -789,7 +789,7 @@ const sidebarOpen = ref(false)
     bottom: 0;
     z-index: 100;
     transform: translateX(100%);
-    transition: transform 0.25s ease;
+    transition: transform 0.2s ease;
     width: 240px;
     border-right: none;
     border-left: 1px solid #2a2a2a;
@@ -799,7 +799,7 @@ const sidebarOpen = ref(false)
 }
 
 /* Fade */
-.fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
 /* Action bar */

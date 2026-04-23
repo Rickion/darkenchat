@@ -117,3 +117,10 @@ html, body, #app {
 .v-btn--icon {
   box-shadow: none !important;
 }
+
+/* Global: 4px inner left padding for all text/textarea inside Vuetify fields */
+.v-field__input,
+.v-field input,
+.v-field textarea {
+  padding-inline-start: 4px !important;
+}
