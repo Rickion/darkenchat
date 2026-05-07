@@ -4,7 +4,8 @@ import { useRoomStore } from '@/stores/room'
 import { useMessagesStore } from '@/stores/messages'
 import { useConnectionStore } from '@/stores/connection'
 import { useTurnStore } from '@/stores/turn'
-import type { Message, S2C, RTCSignal } from '@/types'
+import { useFilesStore } from '@/stores/files'
+import type { Message, S2C, RTCSignal, FileMeta } from '@/types'
 import { nanoid } from 'nanoid'
 import { calcDeviceScore } from '@/utils/score'
 
@@ -12,6 +13,31 @@ import { calcDeviceScore } from '@/utils/score'
 const CATCHUP_MAX_AGE_MS = 10 * 60 * 1000
 // Max number of messages in a catch-up bundle
 const CATCHUP_MAX_COUNT  = 100
+
+// File transfer
+export const MAX_FILE_SIZE = 5 * 1024 * 1024  // 5 MB
+const FILE_CHUNK_SIZE = 32 * 1024              // 32 KB binary → ~43 KB base64
+
+// Directed control messages routed through the center peer.
+const DIRECTED_FILE_TYPES = new Set(['file_request', 'file_chunk', 'file_end', 'file_error'])
+
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  // String.fromCharCode is fastest in chunks to avoid stack issues
+  const STRIDE = 0x8000
+  let s = ''
+  for (let i = 0; i < bytes.length; i += STRIDE) {
+    s += String.fromCharCode(...bytes.subarray(i, i + STRIDE))
+  }
+  return btoa(s)
+}
+
+function base64ToArrayBuffer(b64: string): ArrayBuffer {
+  const s = atob(b64)
+  const bytes = new Uint8Array(s.length)
+  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i)
+  return bytes.buffer
+}
 
 type RoomEvent =
   | { event: 'kicked' }
@@ -26,6 +52,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   const msgStore  = useMessagesStore()
   const connStore = useConnectionStore()
   const turnStore = useTurnStore()
+  const filesStore = useFilesStore()
 
   // ──────────────────────────────────────────────
   // WS relay state
@@ -104,16 +131,22 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     switch (msg.type) {
 
       case 'joined': {
+        // Server may have suffixed the nickname (e.g. "alice" → "alice-2") to dedup.
+        const requestedNick = roomStore.nickname
+        const assignedNick  = msg.nickname ?? requestedNick
         roomStore.setRoom({
           key:         roomStore.key,
           clientId:    msg.clientId,
-          nickname:    roomStore.nickname,
+          nickname:    assignedNick,
           centerId:    msg.centerId,
           chairId:     msg.chairId,
           nicknameSet: msg.nicknameSet,
           members:     msg.members,
         })
         msgStore.load(roomStore.key)
+        if (assignedNick !== requestedNick) {
+          addSystemMessage('system.nickname_renamed', { from: requestedNick, to: assignedNick })
+        }
 
         if (msg.clientId !== msg.centerId) {
           rtc.createPeer(msg.centerId, true /* polite */)
@@ -241,6 +274,18 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         return
       }
 
+      // ── Directed file-transfer control messages ──────────────────────────
+      // These carry a `to` clientId. The center forwards them; everyone else
+      // only handles messages addressed to themselves.
+      if (DIRECTED_FILE_TYPES.has(parsed.type)) {
+        if (parsed.to === roomStore.clientId) {
+          handleFileControl(parsed)
+        } else if (roomStore.isCenter) {
+          sendToMember(parsed.to, raw)
+        }
+        return
+      }
+
       // ── Regular message ──────────────────────────────────────────────────
       const msg = parsed as Message
 
@@ -256,6 +301,150 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       msgStore.add(msg)
       roomStore.reconnecting = false
     } catch { /* malformed */ }
+  }
+
+  // ──────────────────────────────────────────────
+  // File transfer
+  // ──────────────────────────────────────────────
+
+  // Send a directed control message to `to` clientId.
+  // - If I'm the center, deliver directly.
+  // - Else, route through the center, which will forward.
+  function sendDirected(to: string, payload: object): boolean {
+    const raw = JSON.stringify(payload)
+    if (roomStore.isCenter || to === roomStore.centerId) {
+      return sendToMember(to, raw)
+    }
+    return sendToMember(roomStore.centerId, raw)
+  }
+
+  function handleFileControl(parsed: any) {
+    switch (parsed.type) {
+
+      case 'file_request': {
+        // Someone wants to download a file I'm hosting.
+        const file = filesStore.getOutgoing(parsed.fileId)
+        if (!file) {
+          sendDirected(parsed.from, {
+            type: 'file_error', from: roomStore.clientId, to: parsed.from,
+            fileId: parsed.fileId, reason: 'gone',
+          })
+          return
+        }
+        void streamFileTo(parsed.from, parsed.fileId, file)
+        break
+      }
+
+      case 'file_chunk': {
+        const inc = filesStore.incoming.get(parsed.fileId)
+        if (!inc) return  // request was cancelled or never started
+        const buf = base64ToArrayBuffer(parsed.data)
+        filesStore.appendIncoming(parsed.fileId, buf)
+        // Last chunk: assemble + trigger save.
+        if (parsed.seq === parsed.total - 1) {
+          const result = filesStore.completeIncoming(parsed.fileId)
+          if (result) saveBlobAs(result.blob, result.name)
+        }
+        break
+      }
+
+      case 'file_error': {
+        filesStore.failIncoming(parsed.fileId)
+        break
+      }
+    }
+  }
+
+  async function streamFileTo(requesterId: string, fileId: string, file: File) {
+    try {
+      const buf   = await file.arrayBuffer()
+      const total = Math.max(1, Math.ceil(buf.byteLength / FILE_CHUNK_SIZE))
+      for (let i = 0; i < total; i++) {
+        const slice = buf.slice(i * FILE_CHUNK_SIZE, (i + 1) * FILE_CHUNK_SIZE)
+        sendDirected(requesterId, {
+          type: 'file_chunk',
+          from: roomStore.clientId,
+          to:   requesterId,
+          fileId,
+          seq:  i,
+          total,
+          data: arrayBufferToBase64(slice),
+        })
+        // Yield occasionally so chunks are flushed to the wire and the UI thread breathes.
+        if (i % 8 === 7) await new Promise(r => setTimeout(r, 0))
+      }
+    } catch {
+      sendDirected(requesterId, {
+        type: 'file_error', from: roomStore.clientId, to: requesterId,
+        fileId, reason: 'read_failed',
+      })
+    }
+  }
+
+  function saveBlobAs(blob: Blob, name: string) {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  // ─── Public file API ─────────────────────────────────────
+  function attachFile(file: File): { ok: true } | { ok: false, reason: 'too_large' } {
+    if (file.size > MAX_FILE_SIZE) return { ok: false, reason: 'too_large' }
+    const fileId = nanoid()
+    filesStore.setOutgoing(fileId, file)
+    const meta: FileMeta = {
+      fileId,
+      name:    file.name,
+      size:    file.size,
+      mime:    file.type || 'application/octet-stream',
+      ownerId: roomStore.clientId,
+    }
+    dispatch({
+      id:        nanoid(),
+      type:      'file',
+      from:      roomStore.nickname,
+      fromId:    roomStore.clientId,
+      content:   file.name,
+      timestamp: Date.now(),
+      roomKey:   roomStore.key,
+      meta:      meta as unknown as Record<string, unknown>,
+    })
+    return { ok: true }
+  }
+
+  function requestFileDownload(meta: FileMeta) {
+    // I'm the owner — just save from local memory.
+    if (meta.ownerId === roomStore.clientId) {
+      const file = filesStore.getOutgoing(meta.fileId)
+      if (!file) {
+        filesStore.setStatus(meta.fileId, 'error')
+        return
+      }
+      saveBlobAs(file, meta.name)
+      filesStore.setStatus(meta.fileId, 'done')
+      return
+    }
+    // Owner gone? Don't bother sending the request.
+    const ownerStill = roomStore.members.find(m => m.clientId === meta.ownerId)
+    if (!ownerStill) {
+      filesStore.setStatus(meta.fileId, 'error')
+      return
+    }
+    // Already in flight or done — ignore duplicate clicks.
+    const cur = filesStore.status.get(meta.fileId)
+    if (cur === 'downloading') return
+    filesStore.startIncoming(meta.fileId, meta.size, meta.name, meta.mime, meta.ownerId)
+    sendDirected(meta.ownerId, {
+      type:   'file_request',
+      from:   roomStore.clientId,
+      to:     meta.ownerId,
+      fileId: meta.fileId,
+    })
   }
 
   // ──────────────────────────────────────────────
@@ -405,6 +594,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     signaling.send({ type: 'leave', roomKey: roomStore.key })
     signaling.close()
     msgStore.clear(roomStore.key)
+    filesStore.clearAll()
     roomStore.reset()
     connStore.reset()
   }
@@ -425,5 +615,9 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     })
   }
 
-  return { join, leave, sendMessage, sendForward, resendMessage, confirmRelay, signaling, roomStore }
+  return {
+    join, leave, sendMessage, sendForward, resendMessage,
+    attachFile, requestFileDownload,
+    confirmRelay, signaling, roomStore,
+  }
 }

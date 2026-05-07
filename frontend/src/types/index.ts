@@ -1,6 +1,14 @@
 export type MessageType =
-  | 'chat' | 'system' | 'forward' | 'heartbeat' | 'ack'
+  | 'chat' | 'system' | 'forward' | 'file' | 'heartbeat' | 'ack'
   | 'poll' | 'canvas' | 'survey' | 'voice'
+
+export interface FileMeta {
+  fileId: string
+  name: string
+  size: number
+  mime: string
+  ownerId: string
+}
 
 export interface ForwardPayload {
   messages: Message[]
@@ -41,7 +49,7 @@ export type C2S =
 
 // Signaling protocol ─ Server → Client
 export type S2C =
-  | { type: 'joined';      clientId: string; centerId: string; chairId: string; members: MemberInfo[]; nicknameSet: string; isReturning?: boolean }
+  | { type: 'joined';      clientId: string; nickname: string; centerId: string; chairId: string; members: MemberInfo[]; nicknameSet: string; isReturning?: boolean }
   | { type: 'member_join'; member: MemberInfo }
   | { type: 'member_left'; clientId: string; nickname: string }
   | { type: 'member_conn'; clientId: string; connType: 'p2p' | 'turn' | 'relay' }

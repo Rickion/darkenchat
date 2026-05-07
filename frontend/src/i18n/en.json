@@ -34,7 +34,15 @@
     "reconnecting": "Reconnecting...",
     "reconnected": "Reconnected",
     "new_chair": "{name} is now the chairperson",
-    "room_ended": "The session has been ended by the chairperson."
+    "room_ended": "The session has been ended by the chairperson.",
+    "nickname_renamed": "Nickname \"{from}\" was already taken — you joined as \"{to}\"."
+  },
+  "file": {
+    "attach_tooltip": "Send a file (max 5 MB)",
+    "click_to_download": "Click to download",
+    "saved": "Saved",
+    "error": "Sender unavailable",
+    "too_large": "File is too large. Maximum is {mb} MB."
   },
   "chair": {
     "kick_confirm": "Remove {name} from the room?",

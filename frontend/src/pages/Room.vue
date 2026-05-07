@@ -5,13 +5,13 @@ import { useI18n } from 'vue-i18n'
 import { useClipboard } from '@vueuse/core'
 import QRCode from 'qrcode'
 
-import { useRoom } from '@/composables/useRoom'
+import { useRoom, MAX_FILE_SIZE } from '@/composables/useRoom'
 import { useNotification } from '@/composables/useNotification'
 import { useRoomStore } from '@/stores/room'
 import { useMessagesStore } from '@/stores/messages'
 import { useConnectionStore } from '@/stores/connection'
 import { useTurnStore } from '@/stores/turn'
-import type { Message, MemberInfo } from '@/types'
+import type { Message, MemberInfo, FileMeta } from '@/types'
 
 import MemberList from '@/components/MemberList.vue'
 import MessageItem from '@/components/MessageItem.vue'
@@ -63,7 +63,7 @@ const msgStore = useMessagesStore()
 const connStore = useConnectionStore()
 const turnStore = useTurnStore()
 
-const { join, leave, sendMessage, sendForward, resendMessage, confirmRelay, signaling } = useRoom((e: { event: string }) => {
+const { join, leave, sendMessage, sendForward, resendMessage, attachFile, requestFileDownload, confirmRelay, signaling } = useRoom((e: { event: string }) => {
   if (e.event === 'kicked')            { showKickedDialog.value = true }
   if (e.event === 'room_ended')        { showRoomEndedDialog.value = true }
   if (e.event === 'room_banned')       { showSnackbar(t('error.room_banned'), 'error') }
@@ -199,6 +199,29 @@ const privacyColor = computed(() => connStore.color)
 // ─── Actions ──────────────────────────────────────────────
 function onSend(html: string) {
   sendMessage(html)
+}
+
+// ─── File attach ──────────────────────────────────────────
+const fileInput = ref<HTMLInputElement | null>(null)
+
+function onAttachClick() {
+  if (roomStore.reconnecting) return
+  fileInput.value?.click()
+}
+
+function onFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''  // allow re-picking the same file later
+  if (!file) return
+  const result = attachFile(file)
+  if (!result.ok && result.reason === 'too_large') {
+    showSnackbar(t('file.too_large', { mb: Math.floor(MAX_FILE_SIZE / 1024 / 1024) }), 'warning', 4000)
+  }
+}
+
+function onDownloadFile(meta: FileMeta) {
+  requestFileDownload(meta)
 }
 
 async function copyInvite() {
@@ -389,6 +412,7 @@ const sidebarOpen = ref(false)
               :reconnecting="roomStore.reconnecting"
               :show-header="shouldShowHeader(msgStore.messages, i)"
               @resend="resendMessage($event)"
+              @download-file="onDownloadFile"
             />
           </div>
 
@@ -413,6 +437,24 @@ const sidebarOpen = ref(false)
                 />
               </template>
             </v-tooltip>
+            <v-tooltip :text="t('file.attach_tooltip')" location="top">
+              <template #activator="{ props: tp }">
+                <v-btn
+                  icon="mdi-paperclip"
+                  size="x-small"
+                  variant="text"
+                  :disabled="roomStore.reconnecting"
+                  v-bind="tp"
+                  @click="onAttachClick"
+                />
+              </template>
+            </v-tooltip>
+            <input
+              ref="fileInput"
+              type="file"
+              style="display: none"
+              @change="onFilePicked"
+            />
             <v-tooltip text="Coming soon" location="top">
               <template #activator="{ props: tp }">
                 <v-btn icon="mdi-phone" size="x-small" variant="text" v-bind="tp" />

@@ -209,9 +209,19 @@ app.register(async (fastify) => {
           const isReturning = !!leftAt && (Date.now() - leftAt) < RETURNING_TTL
           if (isReturning) room.recentLeft.delete(msg.nickname)
 
+          // Dedup nickname against current members; append -2, -3, ... when colliding.
+          // Returning members keep their name only if it's not in use by someone else.
+          let finalNick = msg.nickname
+          const existing = new Set([...room.members.values()].map(m => m.nickname))
+          if (existing.has(finalNick)) {
+            let n = 2
+            while (existing.has(`${msg.nickname}-${n}`)) n++
+            finalNick = `${msg.nickname}-${n}`
+          }
+
           const member = {
             clientId: currentClientId,
-            nickname: msg.nickname,
+            nickname: finalNick,
             joinedAt: Date.now(),
             isBot:    msg.isBot ?? false,
             ws:       socket,
@@ -223,6 +233,7 @@ app.register(async (fastify) => {
           socket.send(JSON.stringify({
             type:        'joined',
             clientId:    currentClientId,
+            nickname:    finalNick,
             centerId:    room.centerId,
             chairId:     room.chairId,
             isReturning,
