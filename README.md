@@ -33,6 +33,7 @@ Browser A ────────────────────── Bro
 | **Zero registration** | Open a room URL and start chatting |
 | **Encrypted transport** | WebRTC DTLS between peers |
 | **Rich text** | Bold, italic, underline, code blocks, links (Tiptap editor) |
+| **Voice chat** | Up to 5 members can join a mesh audio call inside any room |
 | **Forward / history cards** | Select messages and forward them as a card with a note |
 | **Auto-election** | If the center node goes offline, a new one is elected automatically |
 | **Chair (admin) controls** | First member can kick others or end the room |
@@ -81,16 +82,27 @@ security:
     max_key_probes: 10            # probes per IP per 60s before temp-ban
 ```
 
-If you have a TURN server (recommended for production), uncomment and fill in:
+If you have a TURN server (recommended for production), configure it via environment
+variables — `config.yaml` only stores the URL list and HMAC TTL; credentials are
+read from env so they never get committed.
 
 ```yaml
+# config.yaml
 ice:
   turn:
-    urls:
-      - "turn:turn.your-domain.com:3478"
-    username: "${TURN_USERNAME}"
-    credential: "${TURN_CREDENTIAL}"
+    urls: []                       # filled in by TURN_URLS env (comma-separated)
+    auth_secret: "${TURN_SECRET}"  # HMAC secret for coturn use-auth-secret
+    ttl_seconds: 3600
 ```
+
+Two auth modes (env vars take precedence over `config.yaml`):
+
+- **HMAC (recommended, coturn `use-auth-secret`)**:
+  `TURN_URLS=turn:turn.your-domain.com:3478` + `TURN_SECRET=<shared-secret>`.
+  Credentials are time-limited and minted by the signaling server — the secret
+  never reaches clients.
+- **Static credentials**:
+  `TURN_URLS=...` + `TURN_USERNAME=...` + `TURN_CREDENTIAL=...`.
 
 **Or use Metered.ca built-in TURN provider:**
 
@@ -98,10 +110,19 @@ ice:
 ice:
   metered:
     enabled: true
-    api_url: "${TURN_METERED_API}"
+    api_key: "${TURN_METERED_API_KEY}"   # Metered dashboard "API Key"
+    domain:  "${TURN_METERED_DOMAIN}"    # e.g. your-app.metered.live
+    ttl_seconds: 7200                    # match dashboard TURN_TIME
 ```
 
-Get your Metered API URL from [dashboard.metered.ca](https://dashboard.metered.ca/) → Your Project → API Credentials.
+The signaling server calls Metered server-side on every `/api/turn-metered`
+request and returns fresh temporary credentials — the API key never reaches
+the browser. Clients (browser + MCP) rotate credentials ~10 min before
+expiry and hot-swap them onto any active TURN relay, so an in-progress call
+is not interrupted. Set the Metered dashboard's TURN_TIME to match
+`ttl_seconds` (default 2 h).
+
+Get the API Key and subdomain from [dashboard.metered.ca](https://dashboard.metered.ca/) → Your Project → API Credentials.
 
 ### 2. Set the admin token
 
@@ -169,8 +190,20 @@ server {
 | `security.rate_limit.max_key_probes` | `10` | Max room probes per IP per window |
 | `security.rate_limit.ban_duration_seconds` | `3600` | How long a temp-ban lasts |
 | `room.max_members` | `50` | Max members per room |
-| `room.max_bot_members` | `3` | Max AI/bot members per room |
-| `room.heartbeat_timeout_seconds` | `10` | Seconds before a silent peer is considered gone |
+| `room.max_bot_members` | `10` | Max AI/bot members per room |
+| `room.heartbeat_interval_seconds` | `3` | How often the server sweeps for silent members |
+| `room.heartbeat_timeout_seconds` | `10` | Seconds since the last heartbeat before a member is evicted |
+| `log.switch_log_max_entries` | `1000` | Rolling cap on probe / switch log entries kept in memory |
+| `ice.stun_urls` | Cloudflare + Google | STUN servers advertised to clients |
+| `ice.turn.urls` | `[]` | Self-hosted TURN URLs; usually overridden by `TURN_URLS` env |
+| `ice.turn.auth_secret` | env `TURN_SECRET` | HMAC secret for coturn `use-auth-secret` mode |
+| `ice.turn.ttl_seconds` | `3600` | TTL for HMAC-issued TURN credentials |
+| `ice.metered.enabled` | `false` | Use Metered.ca built-in TURN provider |
+| `ice.metered.api_key` | env | Metered project API key (server-side only) |
+| `ice.metered.domain` | env | Metered project subdomain (e.g. `your-app.metered.live`) |
+| `ice.metered.ttl_seconds` | `7200` | TTL for Metered temp credentials; must match dashboard TURN_TIME |
+| `log.level` | `info` | Fastify logger level |
+
 
 ---
 
@@ -195,9 +228,9 @@ Add to your Claude Desktop config:
 }
 ```
 
-**Tools:** `join_room` · `send_message` · `get_messages` · `leave_room`
+**Tools:** `join_room` · `wait_for_mention` (long-poll, steady-state loop) · `get_messages` · `send_message` · `tally_positions` (expert-panel ROUND/POSITION tally) · `leave_room`
 
-Bot members always appear in the member list with a 🤖 icon. Invisible join is not possible.
+Bot members always appear in the member list with a robot icon (`mdi-robot`). Invisible join is not possible.
 
 ---
 
@@ -223,20 +256,19 @@ darkenchat/
 
 ## Admin API
 
-All endpoints require `X-Admin-Token: <your-token>` header.
+All endpoints except `/api/admin/auth` require the `X-Admin-Token: <your-token>` header.
 
 ```
-GET    /api/admin/rooms                        list active rooms
-GET    /api/admin/rooms/:key/members           list members
-POST   /api/admin/rooms/:key/kick/:clientId    kick a member
-POST   /api/admin/rooms/:key/end               end a room
-GET    /api/admin/bans                         list bans
-POST   /api/admin/bans/ip/:ip                  ban an IP
-DELETE /api/admin/bans/ip/:ip                  unban an IP
-POST   /api/admin/bans/key/:key                ban a room key
-DELETE /api/admin/bans/key/:key                unban a room key
-GET    /api/admin/logs                         probe / switch logs
+POST   /api/admin/auth                    verify the admin token (body: { "token": "…" })
+GET    /api/admin/rooms                   list active rooms
+DELETE /api/admin/rooms/:key              force-dissolve a room (broadcasts room_ended)
+GET    /api/admin/logs                    probe / switch logs
+GET    /api/admin/bans                    list current bans (IPs + room keys)
+DELETE /api/admin/bans/:type/:value       unban an IP or room key (type = "ip" or "key")
 ```
+
+Bans are auto-created by the rate-limit guard; there is no manual ban endpoint —
+only unban.
 
 ---
 
