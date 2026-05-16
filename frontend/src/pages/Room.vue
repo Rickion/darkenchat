@@ -6,17 +6,20 @@ import { useClipboard } from '@vueuse/core'
 import QRCode from 'qrcode'
 
 import { useRoom, MAX_FILE_SIZE } from '@/composables/useRoom'
+import { MAX_VOICE_PARTICIPANTS } from '@/composables/useVoice'
 import { useNotification } from '@/composables/useNotification'
 import { useRoomStore } from '@/stores/room'
 import { useMessagesStore } from '@/stores/messages'
 import { useConnectionStore } from '@/stores/connection'
 import { useTurnStore } from '@/stores/turn'
+import { useVoiceStore } from '@/stores/voice'
 import type { Message, MemberInfo, FileMeta } from '@/types'
 
 import MemberList from '@/components/MemberList.vue'
 import MessageItem from '@/components/MessageItem.vue'
 import RichEditor from '@/components/RichEditor.vue'
 import ForwardPanel from '@/components/ForwardPanel.vue'
+import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 
 import { getRandomNickname, getRandomSeriesKey } from '@/assets/nicknames'
 
@@ -48,6 +51,9 @@ const showQR = ref(false)
 const qrDataUrl = ref('')
 const showRelayConfirm = ref(false)
 const showConnDetail = ref(false)
+const showRoomConfig = ref(false)
+// Editable input inside the dialog. Synced from store on open; written back on save.
+const roomConfigInput = ref<number | string>(0)
 
 const kickTarget = ref<MemberInfo | null>(null)
 const connectionFailed = ref(false)
@@ -62,13 +68,16 @@ const roomStore = useRoomStore()
 const msgStore = useMessagesStore()
 const connStore = useConnectionStore()
 const turnStore = useTurnStore()
+const voiceStore = useVoiceStore()
 
-const { join, leave, sendMessage, sendForward, resendMessage, attachFile, requestFileDownload, confirmRelay, signaling } = useRoom((e: { event: string }) => {
+const { join, leave, sendMessage, sendForward, resendMessage, attachFile, requestFileDownload, requestFileView, startVoiceSession, joinVoiceSession, leaveVoice, toggleMute, confirmRelay, signaling, setAiTurnLimit } = useRoom((e: { event: string }) => {
   if (e.event === 'kicked')            { showKickedDialog.value = true }
   if (e.event === 'room_ended')        { showRoomEndedDialog.value = true }
   if (e.event === 'room_banned')       { showSnackbar(t('error.room_banned'), 'error') }
   if (e.event === 'connection_failed') { connectionFailed.value = true }
   if (e.event === 'relay_request')     { showRelayConfirm.value = true }
+  if (e.event === 'mic_denied')        { showSnackbar(t('voice.mic_denied'), 'error', 5000) }
+  if (e.event === 'voice_full')        { showSnackbar(t('voice.full', { max: MAX_VOICE_PARTICIPANTS }), 'warning', 4000) }
   if (e.event === 'relay_active') {
     showSnackbar(
       connStore.techMode ? t('conn.relay_toast_tech') : t('conn.relay_toast'),
@@ -76,7 +85,44 @@ const { join, leave, sendMessage, sendForward, resendMessage, attachFile, reques
       6000,
     )
   }
+  // P2P recovered before the user decided on relay — dismiss the now-stale
+  // "use server relay?" dialog and join the room normally. Without this the
+  // dialog would just sit there, even though messages are flowing fine.
+  if (e.event === 'p2p_recovered')     { showRelayConfirm.value = false }
 })
+
+// Cancel from the relay confirmation dialog: the user explicitly refuses
+// the server-relay fallback. Without P2P AND without relay there is no way
+// to send or receive in this room, so we tear the session down and route
+// back to home rather than leave a half-dead screen behind.
+function declineRelay() {
+  showRelayConfirm.value = false
+  confirmRelay(false)
+  leave()
+  router.push('/')
+}
+
+// ─── Voice ───────────────────────────────────────────────
+// Mic button has three modes:
+//   - in voice → click leaves the call
+//   - no active session → click starts a brand-new session bubble
+//   - someone else is hosting → button is disabled (use the "Join" affordance
+//     on the in-progress bubble instead)
+function onToggleVoice() {
+  if (voiceStore.inVoice) leaveVoice()
+  else if (!voiceStore.activeSessionId) startVoiceSession()
+}
+
+// Disables the mic button while someone else is hosting a call I'm not in.
+// While I'm in the call the button stays enabled (it acts as "leave").
+const voiceCtrlDisabled = computed(() =>
+  roomStore.reconnecting ||
+  (!!voiceStore.activeSessionId && !voiceStore.inVoice)
+)
+
+function onJoinVoiceFromBubble(sessionId: string) {
+  joinVoiceSession(sessionId)
+}
 
 // Helper: show header only when sender changes or time minute changes
 function shouldShowHeader(messages: Message[], index: number): boolean {
@@ -92,7 +138,7 @@ function shouldShowHeader(messages: Message[], index: number): boolean {
 // Watch for WebSocket disconnection
 watch(() => signaling.disconnected.value, (disconnected) => {
   if (disconnected) {
-    showSnackbar('Connection lost. Please refresh the page.', 'error', 0)
+    showSnackbar(t('error.connection_lost'), 'error', 0)
   }
 })
 
@@ -224,6 +270,25 @@ function onDownloadFile(meta: FileMeta) {
   requestFileDownload(meta)
 }
 
+function onViewFile(meta: FileMeta) {
+  requestFileView(meta)
+}
+
+// Open the room AI config dialog. Reachable from three places: the gear icon
+// on the humans-vs-AI divider in the member list, the (xx/yy) counter next to
+// each AI's name, and the gear shortcut on the "first AI joined" system msg.
+function onOpenRoomConfig() {
+  roomConfigInput.value = roomStore.aiTurnLimit
+  showRoomConfig.value = true
+}
+
+function onSaveRoomConfig() {
+  const raw = Number(roomConfigInput.value)
+  const next = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0
+  setAiTurnLimit(next)
+  showRoomConfig.value = false
+}
+
 async function copyInvite() {
   const url = window.location.href
   copy(url)
@@ -276,6 +341,15 @@ function showSnackbar(text: string, color: string, duration = 0) {
 
 const isMobile = computed(() => window.innerWidth < 768)
 const sidebarOpen = ref(false)
+
+// Action-bar "coming soon" icons (document / whiteboard / map). On desktop the
+// hover tooltip is enough; on mobile there is no hover, so a tap surfaces the
+// same hint via a short snackbar.
+function onComingSoon(label: string) {
+  if (isMobile.value) {
+    showSnackbar(`${label} · ${t('common.coming_soon')}`, 'info', 2500)
+  }
+}
 </script>
 
 <template>
@@ -345,7 +419,11 @@ const sidebarOpen = ref(false)
 
         <!-- Invite / copy link -->
         <div class="invite-wrap">
-          <v-btn icon="mdi-account-plus" size="small" variant="text" color="primary" @click="copyInvite" />
+          <v-tooltip :text="t('room.invite')" location="bottom">
+            <template #activator="{ props: tp }">
+              <v-btn icon="mdi-account-plus" size="small" variant="text" color="primary" v-bind="tp" @click="copyInvite" />
+            </template>
+          </v-tooltip>
           <Transition name="fade">
             <span v-if="showCopied" class="copied-tip">{{ t('room.copied') }}</span>
           </Transition>
@@ -354,21 +432,28 @@ const sidebarOpen = ref(false)
         <v-spacer />
 
         <!-- Chair-only: close room for everyone -->
-        <v-tooltip v-if="roomStore.isChair" text="Close Room for Everyone" location="bottom">
+        <v-tooltip v-if="roomStore.isChair" :text="t('chair.close_room_tooltip')" location="bottom">
           <template #activator="{ props: tp }">
             <v-btn icon="mdi-stop-circle-outline" size="small" variant="text" color="error" v-bind="tp" @click="showEndConfirm = true" />
           </template>
         </v-tooltip>
 
         <!-- Leave room (only self) -->
-        <v-tooltip text="Leave Room" location="bottom">
+        <v-tooltip :text="t('room.leave_room')" location="bottom">
           <template #activator="{ props: tp }">
             <v-btn icon="mdi-exit-to-app" size="small" variant="text" v-bind="tp" @click="showSwitchConfirm = true" />
           </template>
         </v-tooltip>
 
+        <!-- Language switcher (top-right) -->
+        <LanguageSwitcher :size="isMobile ? 'x-small' : 'small'" />
+
         <!-- Mobile sidebar toggle -->
-        <v-btn v-if="isMobile" icon="mdi-menu" size="small" variant="text" @click="sidebarOpen = !sidebarOpen" />
+        <v-tooltip v-if="isMobile" :text="t('room.menu')" location="bottom">
+          <template #activator="{ props: tp }">
+            <v-btn icon="mdi-menu" size="small" variant="text" v-bind="tp" @click="sidebarOpen = !sidebarOpen" />
+          </template>
+        </v-tooltip>
       </header>
 
       <!-- BODY -->
@@ -388,7 +473,7 @@ const sidebarOpen = ref(false)
             @click="sidebarOpen = false"
           />
           <div class="sidebar-header">
-            <span class="sidebar-title">Members ({{ roomStore.members.length }})</span>
+            <span class="sidebar-title">{{ t('room.members_count', { count: roomStore.members.length }) }}</span>
           </div>
           <MemberList
             :members="roomStore.members"
@@ -396,6 +481,7 @@ const sidebarOpen = ref(false)
             :client-id="roomStore.clientId"
             :is-chair="roomStore.isChair"
             @kick="onKickRequest"
+            @open-room-config="onOpenRoomConfig"
           />
         </aside>
 
@@ -413,6 +499,9 @@ const sidebarOpen = ref(false)
               :show-header="shouldShowHeader(msgStore.messages, i)"
               @resend="resendMessage($event)"
               @download-file="onDownloadFile"
+              @view-file="onViewFile"
+              @join-voice="onJoinVoiceFromBubble"
+              @open-room-config="onOpenRoomConfig"
             />
           </div>
 
@@ -424,55 +513,122 @@ const sidebarOpen = ref(false)
             @cancel="showForward = false"
           />
 
-          <!-- Action bar -->
-          <div v-if="!showForward" class="action-bar">
-            <v-tooltip text="Forward messages" location="top">
-              <template #activator="{ props: tp }">
-                <v-btn
-                  icon="mdi-share"
-                  size="x-small"
-                  variant="text"
-                  v-bind="tp"
-                  @click="showForward = !showForward"
-                />
-              </template>
-            </v-tooltip>
-            <v-tooltip :text="t('file.attach_tooltip')" location="top">
-              <template #activator="{ props: tp }">
-                <v-btn
-                  icon="mdi-paperclip"
-                  size="x-small"
-                  variant="text"
-                  :disabled="roomStore.reconnecting"
-                  v-bind="tp"
-                  @click="onAttachClick"
-                />
-              </template>
-            </v-tooltip>
-            <input
-              ref="fileInput"
-              type="file"
-              style="display: none"
-              @change="onFilePicked"
+          <input
+            v-if="!showForward"
+            ref="fileInput"
+            type="file"
+            style="display: none"
+            @change="onFilePicked"
+          />
+
+          <!-- Hidden audio sinks for remote voice streams -->
+          <div class="voice-audio-host" aria-hidden="true">
+            <audio
+              v-for="[id, stream] in voiceStore.remoteStreams"
+              :key="id"
+              :ref="(el) => { if (el) (el as HTMLAudioElement).srcObject = stream }"
+              autoplay
+              playsinline
             />
-            <v-tooltip text="Coming soon" location="top">
-              <template #activator="{ props: tp }">
-                <v-btn icon="mdi-phone" size="x-small" variant="text" v-bind="tp" />
-              </template>
-            </v-tooltip>
-            <v-tooltip text="Coming soon" location="top">
-              <template #activator="{ props: tp }">
-                <v-btn icon="mdi-video" size="x-small" variant="text" v-bind="tp" />
-              </template>
-            </v-tooltip>
-            <v-tooltip text="Coming soon" location="top">
-              <template #activator="{ props: tp }">
-                <v-btn icon="mdi-microphone" size="x-small" variant="text" v-bind="tp" />
-              </template>
-            </v-tooltip>
           </div>
 
-          <RichEditor v-if="!showForward" :disabled="roomStore.reconnecting" @send="onSend" />
+          <RichEditor
+            v-if="!showForward"
+            :disabled="roomStore.reconnecting"
+            :members="roomStore.members"
+            :client-id="roomStore.clientId"
+            @send="onSend"
+          >
+            <template #action-bar>
+              <v-tooltip :text="t('forward.tooltip')" location="top">
+                <template #activator="{ props: tp }">
+                  <v-btn
+                    icon="mdi-share"
+                    size="x-small"
+                    variant="text"
+                    v-bind="tp"
+                    @click="showForward = !showForward"
+                  />
+                </template>
+              </v-tooltip>
+              <v-tooltip :text="t('file.attach_tooltip')" location="top">
+                <template #activator="{ props: tp }">
+                  <v-btn
+                    icon="mdi-paperclip"
+                    size="x-small"
+                    variant="text"
+                    :disabled="roomStore.reconnecting"
+                    v-bind="tp"
+                    @click="onAttachClick"
+                  />
+                </template>
+              </v-tooltip>
+              <!-- Voice chat (phone icon = real entry) -->
+              <v-tooltip
+                :text="voiceStore.inVoice
+                  ? t('voice.leave')
+                  : (voiceStore.activeSessionId ? t('voice.busy') : t('voice.start'))"
+                location="top"
+              >
+                <template #activator="{ props: tp }">
+                  <v-btn
+                    :icon="voiceStore.inVoice ? 'mdi-phone-in-talk' : 'mdi-phone'"
+                    size="x-small"
+                    variant="text"
+                    :color="voiceStore.inVoice ? 'success' : undefined"
+                    :disabled="voiceCtrlDisabled"
+                    v-bind="tp"
+                    @click="onToggleVoice"
+                  />
+                </template>
+              </v-tooltip>
+              <!-- Video call: not implemented yet -->
+              <v-tooltip :text="`${t('common.video')} · ${t('common.coming_soon')}`" location="top">
+                <template #activator="{ props: tp }">
+                  <v-btn icon="mdi-video" size="x-small" variant="text" v-bind="tp" />
+                </template>
+              </v-tooltip>
+              <!-- Voice message (push-to-talk style): not implemented yet -->
+              <v-tooltip :text="`${t('common.voice_message')} · ${t('common.coming_soon')}`" location="top">
+                <template #activator="{ props: tp }">
+                  <v-btn icon="mdi-microphone" size="x-small" variant="text" v-bind="tp" />
+                </template>
+              </v-tooltip>
+              <!-- Document / Whiteboard / Map: not implemented yet.
+                   Desktop shows the tooltip on hover; mobile taps the button. -->
+              <v-tooltip :text="`${t('common.document')} · ${t('common.coming_soon')}`" location="top">
+                <template #activator="{ props: tp }">
+                  <v-btn icon="mdi-file-document-outline" size="x-small" variant="text" v-bind="tp" @click="onComingSoon(t('common.document'))" />
+                </template>
+              </v-tooltip>
+              <v-tooltip :text="`${t('common.canvas')} · ${t('common.coming_soon')}`" location="top">
+                <template #activator="{ props: tp }">
+                  <v-btn icon="mdi-palette-outline" size="x-small" variant="text" v-bind="tp" @click="onComingSoon(t('common.canvas'))" />
+                </template>
+              </v-tooltip>
+              <v-tooltip :text="`${t('common.map')} · ${t('common.coming_soon')}`" location="top">
+                <template #activator="{ props: tp }">
+                  <v-btn icon="mdi-map-outline" size="x-small" variant="text" v-bind="tp" @click="onComingSoon(t('common.map'))" />
+                </template>
+              </v-tooltip>
+              <v-tooltip
+                v-if="voiceStore.inVoice"
+                :text="voiceStore.muted ? t('voice.unmute') : t('voice.mute')"
+                location="top"
+              >
+                <template #activator="{ props: tp }">
+                  <v-btn
+                    :icon="voiceStore.muted ? 'mdi-volume-off' : 'mdi-volume-high'"
+                    size="x-small"
+                    variant="text"
+                    :color="voiceStore.muted ? 'warning' : undefined"
+                    v-bind="tp"
+                    @click="toggleMute"
+                  />
+                </template>
+              </v-tooltip>
+            </template>
+          </RichEditor>
         </div>
       </div>
 
@@ -486,29 +642,29 @@ const sidebarOpen = ref(false)
 
       <!-- Connection detail panel -->
       <v-dialog v-model="showConnDetail" max-width="460">
-        <v-card id="conn-detail-panel" color="surface" style="padding: 20px;" class="pa-5">
-          <v-card-title class="pt-5 px-6 d-flex align-center gap-2">
+        <v-card id="conn-detail-panel" color="surface">
+          <v-card-title class="d-flex align-center gap-2">
             <v-icon :style="{ color: connStore.color }">{{ connStore.icon }}</v-icon>
             {{ t('conn.' + connStore.state) }}
           </v-card-title>
-          <v-card-text class="px-6 pb-4">
+          <v-card-text>
             {{ connStore.techMode ? t('conn.' + connStore.state + '_tech') : t('conn.' + connStore.state) }}
           </v-card-text>
 
           <!-- TURN server settings -->
-          <v-divider class="mx-6 mt-4" />
-          <v-card-text class="px-6 pt-4 pb-2">
-            <div class="text-caption mb-2" style="color: var(--dc-gray); text-transform: uppercase; letter-spacing: .05em">TURN Server</div>
+          <v-divider />
+          <v-card-text>
+            <div class="text-caption mb-2" style="color: var(--dc-gray); text-transform: uppercase; letter-spacing: .05em">{{ t('conn.turn_server') }}</div>
 
             <!-- Metered.ca built-in option -->
             <template v-if="turnStore.meteredEnabled && !turnStore.useCustom">
               <v-switch
                 v-model="turnStore.useMetered"
-                label="Use built-in TURN (Metered.ca)"
+                :label="t('conn.turn_metered')"
                 density="compact"
                 hide-details
                 color="primary"
-                class="mb-4" style="margin-left: 16px; margin-right: 80px; width: fit-content;"
+                class="mb-2"
               />
             </template>
 
@@ -517,11 +673,11 @@ const sidebarOpen = ref(false)
               <div v-if="turnStore.serverUrl" class="text-body-2 mb-1">
                 <v-icon size="14" class="mr-1" color="success">mdi-check-circle-outline</v-icon>
                 {{ turnStore.serverUrl }}
-                <span class="text-caption ml-1" style="color: var(--dc-gray)">(auto credentials)</span>
+                <span class="text-caption ml-1" style="color: var(--dc-gray)">{{ t('conn.turn_auto_creds') }}</span>
               </div>
               <div v-else class="text-body-2 mb-1" style="color: var(--dc-gray)">
                 <v-icon size="14" class="mr-1">mdi-information-outline</v-icon>
-                No default TURN configured
+                {{ t('conn.turn_none') }}
               </div>
             </template>
 
@@ -529,63 +685,61 @@ const sidebarOpen = ref(false)
             <template v-if="turnStore.useCustom">
               <v-switch
                 v-model="turnStore.useCustom"
-                label="Use custom TURN server"
+                :label="t('conn.turn_custom')"
                 density="compact"
                 hide-details
                 color="primary"
-                class="mb-3" style="margin-left: 16px; margin-right: 80px; width: fit-content;"
+                class="mb-2"
               />
               <v-text-field
                 v-model="turnStore.customUrl"
-                label="TURN URL"
+                :label="t('conn.turn_url')"
                 :placeholder="turnStore.serverUrl || 'turn:your-server.com:3478'"
                 density="compact"
                 hide-details
-                class="mt-4"
-                style="margin-bottom: 20px;"
+                class="mt-3 mb-3"
               />
               <v-text-field
                 v-model="turnStore.customUsername"
-                label="Username"
+                :label="t('conn.turn_username')"
                 density="compact"
                 hide-details
-                style="margin-bottom: 20px;"
+                class="mb-3"
               />
               <v-text-field
                 v-model="turnStore.customCredential"
-                label="Credential"
+                :label="t('conn.turn_credential')"
                 type="password"
                 density="compact"
                 hide-details
-                style="margin-bottom: 20px;"
+                class="mb-3"
               />
-              <div class="text-caption mt-3" style="color: var(--dc-gray)">Changes apply when joining the next room.</div>
+              <div class="text-caption mt-2" style="color: var(--dc-gray)">{{ t('conn.turn_apply_hint') }}</div>
             </template>
 
             <v-switch
               v-if="!turnStore.useCustom"
               v-model="turnStore.useCustom"
-              label="Use custom TURN server"
+              :label="t('conn.turn_custom')"
               density="compact"
               hide-details
               color="primary"
-              class="mt-4" style="margin-left: 16px; margin-right: 80px; width: fit-content;"
+              class="mt-2"
             />
           </v-card-text>
 
-          <v-divider class="mx-6 mt-4" />
-          <v-card-text class="px-6 pt-4 pb-4">
+          <v-divider />
+          <v-card-text>
             <v-switch
               v-model="connStore.techMode"
               :label="t('conn.tech_mode_label')"
               density="compact"
               hide-details
               color="primary"
-              style="margin-left: 16px; margin-right: 80px; width: fit-content;"
             />
           </v-card-text>
-          <v-card-actions class="justify-end px-6 pb-5">
-            <v-btn variant="text" @click="showConnDetail = false">{{ t('forward.cancel') }}</v-btn>
+          <v-card-actions class="justify-end">
+            <v-btn variant="text" @click="showConnDetail = false">{{ t('common.close') }}</v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -593,14 +747,14 @@ const sidebarOpen = ref(false)
       <!-- WS Relay confirmation (blocking) -->
       <v-dialog v-model="showRelayConfirm" persistent max-width="480">
         <v-card color="surface">
-          <v-card-title class="pt-6 px-6 d-flex align-center gap-2">
+          <v-card-title class="d-flex align-center gap-2">
             <v-icon color="warning">mdi-server-network</v-icon>
             {{ t('conn.relay_confirm_title') }}
           </v-card-title>
-          <v-card-text class="px-6 pb-4" style="white-space: pre-line">
+          <v-card-text style="white-space: pre-line">
             {{ connStore.techMode ? t('conn.relay_confirm_body_tech') : t('conn.relay_confirm_body') }}
           </v-card-text>
-          <v-card-text class="px-6 pt-0 pb-4 text-caption">
+          <v-card-text class="text-caption">
             <v-switch
               v-model="connStore.techMode"
               :label="t('conn.tech_mode_label')"
@@ -609,8 +763,8 @@ const sidebarOpen = ref(false)
               color="primary"
             />
           </v-card-text>
-          <v-card-actions class="justify-end gap-2 pb-5 px-6">
-            <v-btn variant="text" @click="showRelayConfirm = false; confirmRelay(false)">{{ t('conn.relay_confirm_cancel') }}</v-btn>
+          <v-card-actions class="justify-end gap-2">
+            <v-btn variant="text" @click="declineRelay">{{ t('conn.relay_confirm_cancel') }}</v-btn>
             <v-btn color="warning" @click="showRelayConfirm = false; confirmRelay(true)">{{ t('conn.relay_confirm_ok') }}</v-btn>
           </v-card-actions>
         </v-card>
@@ -619,12 +773,12 @@ const sidebarOpen = ref(false)
       <!-- Kick confirm -->
       <v-dialog v-model="showKickConfirm" max-width="380">
         <v-card color="surface">
-          <v-card-text class="pt-6 px-6 pb-4">
+          <v-card-text>
             {{ t('chair.kick_confirm', { name: kickTarget?.nickname ?? '' }) }}
           </v-card-text>
-          <v-card-actions class="justify-end gap-2 pb-5 px-6">
-            <v-btn variant="text" @click="showKickConfirm = false">{{ t('forward.cancel') }}</v-btn>
-            <v-btn color="error" @click="confirmKick">Remove</v-btn>
+          <v-card-actions class="justify-end gap-2">
+            <v-btn variant="text" @click="showKickConfirm = false">{{ t('common.cancel') }}</v-btn>
+            <v-btn color="error" @click="confirmKick">{{ t('chair.remove_btn') }}</v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -632,55 +786,94 @@ const sidebarOpen = ref(false)
       <!-- End room confirm -->
       <v-dialog v-model="showEndConfirm" max-width="400">
         <v-card color="surface">
-          <v-card-text class="pt-6 px-6">{{ t('chair.end_confirm') }}</v-card-text>
-          <v-card-actions class="justify-end gap-2 pb-5 px-6">
-            <v-btn variant="text" @click="showEndConfirm = false">{{ t('forward.cancel') }}</v-btn>
-            <v-btn color="error" @click="confirmEndRoom">Close for Everyone</v-btn>
+          <v-card-text>{{ t('chair.end_confirm') }}</v-card-text>
+          <v-card-actions class="justify-end gap-2">
+            <v-btn variant="text" @click="showEndConfirm = false">{{ t('common.cancel') }}</v-btn>
+            <v-btn color="error" @click="confirmEndRoom">{{ t('chair.close_room_btn') }}</v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
 
       <!-- Room ended by chair -->
       <v-dialog v-model="showRoomEndedDialog" persistent max-width="400">
-        <v-card color="surface" class="text-center pa-8">
-          <div class="text-h5 mb-2"><v-icon color="warning" class="mr-1">mdi-ghost</v-icon>DarkenChat</div>
-          <div class="mb-6">{{ t('system.room_ended') }}</div>
-          <v-btn color="primary" @click="dismissRoomEnded">OK</v-btn>
+        <v-card color="surface" class="text-center">
+          <v-card-title class="justify-center">
+            <v-icon color="warning" class="mr-1">mdi-ghost</v-icon>DarkenChat
+          </v-card-title>
+          <v-card-text>{{ t('system.room_ended') }}</v-card-text>
+          <v-card-actions class="justify-center">
+            <v-btn color="primary" @click="dismissRoomEnded">{{ t('common.ok') }}</v-btn>
+          </v-card-actions>
         </v-card>
       </v-dialog>
 
       <!-- Kicked notice -->
       <v-dialog v-model="showKickedDialog" persistent max-width="400">
-        <v-card color="surface" class="text-center pa-8">
-          <div class="text-h5 mb-2"><v-icon color="warning" class="mr-1">mdi-ghost</v-icon>DarkenChat</div>
-          <div class="mb-6">{{ t('chair.kicked_notice') }}</div>
-          <v-btn color="primary" @click="dismissKicked">OK</v-btn>
+        <v-card color="surface" class="text-center">
+          <v-card-title class="justify-center">
+            <v-icon color="warning" class="mr-1">mdi-ghost</v-icon>DarkenChat
+          </v-card-title>
+          <v-card-text>{{ t('chair.kicked_notice') }}</v-card-text>
+          <v-card-actions class="justify-center">
+            <v-btn color="primary" @click="dismissKicked">{{ t('common.ok') }}</v-btn>
+          </v-card-actions>
         </v-card>
       </v-dialog>
 
       <!-- Leave room confirm -->
       <v-dialog v-model="showSwitchConfirm" max-width="420">
         <v-card color="surface">
-          <v-card-text class="pt-6 px-6">
+          <v-card-text>
             <v-icon color="warning" class="mr-1">mdi-alert</v-icon>{{ t('room.switch_warning', { key: roomKey }) }}
           </v-card-text>
-          <v-card-actions class="justify-end gap-2 pb-5 px-6">
-            <v-btn variant="text" @click="showSwitchConfirm = false">{{ t('forward.cancel') }}</v-btn>
-            <v-btn color="warning" @click="leave(); router.push('/')">Leave Room</v-btn>
+          <v-card-actions class="justify-end gap-2">
+            <v-btn variant="text" @click="showSwitchConfirm = false">{{ t('common.cancel') }}</v-btn>
+            <v-btn color="warning" @click="leave(); router.push('/')">{{ t('room.leave_room_btn') }}</v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
 
       <!-- QR code popup -->
       <v-dialog v-model="showQR" max-width="300">
-        <v-card color="surface" class="pa-6">
-          <div class="text-caption text-center mb-4" style="color: var(--dc-gold)">{{ t('room.copied') }}</div>
-          <div class="d-flex justify-center">
+        <v-card color="surface">
+          <v-card-text class="text-caption text-center" style="color: var(--dc-gold)">{{ t('room.copied') }}</v-card-text>
+          <v-card-text class="d-flex justify-center">
             <img :src="qrDataUrl" width="220" height="220" style="border-radius: 10px; display:block" />
-          </div>
-          <div class="d-flex justify-center mt-4">
-            <v-btn variant="text" size="small" @click="showQR = false">{{ t('forward.cancel') }}</v-btn>
-          </div>
+          </v-card-text>
+          <v-card-actions class="justify-center">
+            <v-btn variant="text" size="small" @click="showQR = false">{{ t('common.close') }}</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
+
+      <!-- Room AI config: per-room hard turn cap for bot members -->
+      <v-dialog v-model="showRoomConfig" max-width="420">
+        <v-card color="surface">
+          <v-card-title class="d-flex align-center gap-2">
+            <v-icon color="primary">mdi-cog-outline</v-icon>
+            {{ t('room_config.title') }}
+          </v-card-title>
+          <v-card-text>
+            <v-text-field
+              v-model.number="roomConfigInput"
+              type="number"
+              min="0"
+              step="1"
+              :disabled="!roomStore.isChair"
+              :label="t('room_config.ai_turn_limit_label')"
+              :hint="t('room_config.ai_turn_limit_hint')"
+              persistent-hint
+              density="compact"
+            />
+            <div v-if="!roomStore.isChair" class="text-caption mt-2" style="color: var(--dc-gray)">
+              <v-icon size="14" class="mr-1">mdi-information-outline</v-icon>
+              {{ t('room_config.chair_only') }}
+            </div>
+          </v-card-text>
+          <v-card-actions class="justify-end gap-2">
+            <v-btn variant="text" @click="showRoomConfig = false">{{ t('common.cancel') }}</v-btn>
+            <v-btn color="primary" :disabled="!roomStore.isChair" @click="onSaveRoomConfig">{{ t('room_config.save') }}</v-btn>
+          </v-card-actions>
         </v-card>
       </v-dialog>
 
@@ -844,17 +1037,6 @@ const sidebarOpen = ref(false)
 .fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
-/* Action bar */
-.action-bar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 8px;
-  border-top: 1px solid #2a2a2a;
-  background: var(--dc-panel);
-  flex-shrink: 0;
-}
-
 /* Sidebar close btn (mobile) */
 .sidebar-close-btn {
   position: absolute;
@@ -867,4 +1049,6 @@ const sidebarOpen = ref(false)
 #conn-detail-panel :deep(.v-switch) .v-label {
   margin-left: 12px;
 }
+
+.voice-audio-host { display: none; }
 </style>

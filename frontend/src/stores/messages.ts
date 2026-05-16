@@ -45,6 +45,17 @@ export const useMessagesStore = defineStore('messages', () => {
     }
   }
 
+  // Mutate a message in place. Used for voice-session bubbles whose participant
+  // list grows as new joiners arrive and that flips to "ended" when the call wraps.
+  function update(id: string, patcher: (m: Message) => void) {
+    const msg = messages.value.find(m => m.id === id)
+    if (!msg) return
+    patcher(msg)
+    if (currentRoomKey.value) {
+      saveToSession(currentRoomKey.value, messages.value)
+    }
+  }
+
   function markFailed(id: string) {
     failedIds.add(id)
   }
@@ -67,5 +78,5 @@ export const useMessagesStore = defineStore('messages', () => {
     currentRoomKey.value = ''
   }
 
-  return { messages, currentRoomKey, failedIds, catchupIds, load, add, markFailed, clearFailed, markCatchup, clear }
+  return { messages, currentRoomKey, failedIds, catchupIds, load, add, update, markFailed, clearFailed, markCatchup, clear }
 })

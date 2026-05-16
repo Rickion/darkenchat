@@ -22,10 +22,24 @@
     "copied": "Link copied",
     "switch_warning": "Leaving room {key} will clear all messages from your device. This cannot be undone.",
     "nickname_label": "Your nickname",
-    "nickname_hint": "Press 🎲 for a random nickname",
-    "input_placeholder": "Type a message...",
+    "nickname_hint": "Click the dice button for a random nickname",
+    "input_placeholder": "Type a message…",
     "join_as": "Join as {nick}",
-    "create_as": "Create as {nick}"
+    "create_as": "Create as {nick}",
+    "members_count": "Members ({count})",
+    "you_suffix": "you",
+    "leave_room": "Leave Room",
+    "leave_room_btn": "Leave Room",
+    "menu": "Menu",
+    "invite": "Copy invite link",
+    "open_sidebar": "Open sidebar",
+    "close_sidebar": "Close sidebar",
+    "chairperson": "Chairperson",
+    "in_voice_channel": "In voice channel",
+    "mention_at": "Mention a member",
+    "mention_all": "All",
+    "mention_all_ai": "All AI",
+    "input_url_prompt": "Enter URL"
   },
   "system": {
     "join": "{name} joined ({connType})",
@@ -35,29 +49,60 @@
     "reconnected": "Reconnected",
     "new_chair": "{name} is now the chairperson",
     "room_ended": "The session has been ended by the chairperson.",
-    "nickname_renamed": "Nickname \"{from}\" was already taken — you joined as \"{to}\"."
+    "nickname_renamed": "Nickname \"{from}\" was already taken — you joined as \"{to}\".",
+    "join_ai": "AI {name} joined",
+    "join_ai_first": "AI {name} joined",
+    "room_config_set": "Chair set the AI hard turn cap to {limit}",
+    "room_config_unlimited": "Chair removed the AI hard turn cap (unlimited)"
   },
   "file": {
     "attach_tooltip": "Send a file (max 5 MB)",
     "click_to_download": "Click to download",
+    "click_to_fetch": "Click to load preview",
+    "click_to_save": "Click to save",
     "saved": "Saved",
     "error": "Sender unavailable",
     "too_large": "File is too large. Maximum is {mb} MB."
+  },
+  "voice": {
+    "join": "Join voice chat",
+    "leave": "Leave voice chat",
+    "start": "Start voice chat",
+    "busy": "Voice chat in progress",
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "you": "You",
+    "mic_denied": "Microphone permission denied. Please allow microphone access in your browser settings.",
+    "full": "Voice chat is full ({max} participants max).",
+    "session_in_progress": "Voice chat in progress",
+    "session_ended_short": "Voice chat ended",
+    "summary_title": "Voice chat ended",
+    "summary_line": "Duration {duration} · Participants: {names} · Ended at {endedAt}",
+    "join_session": "Join",
+    "system_label": "System"
   },
   "chair": {
     "kick_confirm": "Remove {name} from the room?",
     "end_confirm": "End the session? All messages will be lost immediately.",
     "kicked_notice": "You have been removed from the room.",
-    "end_room": "End Room"
+    "end_room": "End Room",
+    "close_room": "Close room",
+    "close_room_tooltip": "Close room for everyone",
+    "close_room_btn": "Close for Everyone",
+    "remove_btn": "Remove",
+    "kick_member": "Remove member"
   },
   "forward": {
     "title": "{name} forwarded {count} message(s)",
+    "tooltip": "Forward messages",
     "note_placeholder": "Add a note (optional)",
     "expand": "Expand",
     "collapse": "Collapse",
     "select_all": "Select all",
     "confirm": "Forward",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "count_selected": "{count} selected",
+    "system_tag": "[System]"
   },
   "nickname": {
     "title": "Choose your nickname",
@@ -87,11 +132,22 @@
     "relay_confirm_body_tech": "P2P DataChannel unavailable (likely CGNAT/symmetric NAT). WS relay fallback will forward messages as plaintext JSON through the signaling server. The server operator can inspect message content.\n\nRecommendation: ensure all peers are on the same LAN or use a properly configured TURN server.",
     "relay_confirm_ok":     "Continue with Relay",
     "relay_confirm_cancel": "Disconnect",
-    "tech_mode_label":  "Technical view"
+    "tech_mode_label":  "Technical view",
+    "turn_server": "TURN Server",
+    "turn_metered": "Use built-in TURN (Metered.ca)",
+    "turn_custom": "Use custom TURN server",
+    "turn_auto_creds": "(auto credentials)",
+    "turn_none": "No default TURN configured",
+    "turn_url": "TURN URL",
+    "turn_username": "Username",
+    "turn_credential": "Credential",
+    "turn_apply_hint": "Changes apply when joining the next room.",
+    "status_panel": "Status"
   },
   "admin": {
     "token_prompt": "Enter admin token",
     "token_label": "Admin Token",
+    "token_invalid": "Invalid token",
     "rooms_title": "Active Rooms",
     "col_key": "Key",
     "col_created": "Created",
@@ -105,13 +161,42 @@
     "col_time": "Time",
     "col_to_key": "Key",
     "col_action_type": "Action",
-    "col_blocked": "Blocked"
+    "col_blocked": "Blocked",
+    "enter": "Enter",
+    "ips": "IPs",
+    "room_keys": "Room Keys",
+    "unban": "Unban",
+    "title": "DarkenChat Admin"
   },
   "error": {
     "room_not_found": "Room {key} does not exist.",
     "create_prompt": "Create and enter",
     "connection_failed": "Connection failed. Please refresh.",
+    "connection_lost": "Connection lost. Please refresh the page.",
     "room_banned": "This room has been closed."
+  },
+  "common": {
+    "close": "Close",
+    "cancel": "Cancel",
+    "ok": "OK",
+    "language": "Language",
+    "language_en": "English",
+    "language_zh": "中文",
+    "coming_soon": "Coming soon",
+    "video": "Video call",
+    "voice_message": "Voice message",
+    "document": "Document",
+    "canvas": "Whiteboard",
+    "map": "Map"
+  },
+  "room_config": {
+    "title": "Room AI settings",
+    "ai_turn_limit_label": "AI hard turn cap (per AI)",
+    "ai_turn_limit_hint": "0 = unlimited. When reached, the AI is forced to leave.",
+    "save": "Save",
+    "chair_only": "Only the chairperson can change this.",
+    "divider_ai": "AI",
+    "turn_count_tooltip": "Sent {sent} messages, limit {limit}",
+    "gear_tooltip": "Configure AI settings"
   }
 }
-

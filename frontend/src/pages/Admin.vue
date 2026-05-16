@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
+import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 
 const { t } = useI18n()
 
@@ -30,7 +31,7 @@ async function login() {
     authed.value = true
     await loadAll()
   } else {
-    tokenError.value = 'Invalid token'
+    tokenError.value = t('admin.token_invalid')
   }
 }
 
@@ -75,7 +76,9 @@ onMounted(async () => {
     <!-- Token gate -->
     <div v-if="!authed" class="token-gate">
       <div class="token-card">
-        <div class="text-h6 mb-4">🌑 DarkenChat Admin</div>
+        <div class="text-h6 mb-4 d-flex align-center">
+          <v-icon color="warning" class="mr-2">mdi-ghost</v-icon>{{ t('admin.title') }}
+        </div>
         <v-text-field
           v-model="tokenInput"
           :label="t('admin.token_label')"
@@ -83,14 +86,18 @@ onMounted(async () => {
           :error-messages="tokenError"
           @keyup.enter="login"
         />
-        <v-btn color="primary" block @click="login">Enter</v-btn>
+        <v-btn color="primary" block @click="login">{{ t('admin.enter') }}</v-btn>
       </div>
     </div>
 
     <!-- Admin dashboard -->
     <div v-else class="admin-content">
       <div class="admin-header">
-        <span class="text-h6">🌑 DarkenChat Admin</span>
+        <span class="text-h6 d-flex align-center">
+          <v-icon color="warning" class="mr-2">mdi-ghost</v-icon>{{ t('admin.title') }}
+        </span>
+        <v-spacer />
+        <LanguageSwitcher size="small" />
         <v-btn icon="mdi-refresh" size="small" variant="text" @click="loadAll" />
       </div>
 
@@ -156,18 +163,18 @@ onMounted(async () => {
         <!-- Bans -->
         <div v-if="tab === 'bans'">
           <v-list bg-color="transparent">
-            <v-list-subheader>IPs</v-list-subheader>
+            <v-list-subheader>{{ t('admin.ips') }}</v-list-subheader>
             <v-list-item v-for="b in bans.filter(b => b.type === 'ip')" :key="b.value">
               <v-list-item-title>{{ b.value }}</v-list-item-title>
               <template #append>
-                <v-btn size="x-small" variant="text" color="warning" @click="unban('ip', b.value)">Unban</v-btn>
+                <v-btn size="x-small" variant="text" color="warning" @click="unban('ip', b.value)">{{ t('admin.unban') }}</v-btn>
               </template>
             </v-list-item>
-            <v-list-subheader>Room Keys</v-list-subheader>
+            <v-list-subheader>{{ t('admin.room_keys') }}</v-list-subheader>
             <v-list-item v-for="b in bans.filter(b => b.type === 'key')" :key="b.value">
               <v-list-item-title><code>{{ b.value }}</code></v-list-item-title>
               <template #append>
-                <v-btn size="x-small" variant="text" color="warning" @click="unban('key', b.value)">Unban</v-btn>
+                <v-btn size="x-small" variant="text" color="warning" @click="unban('key', b.value)">{{ t('admin.unban') }}</v-btn>
               </template>
             </v-list-item>
           </v-list>

@@ -15,8 +15,12 @@ export const useTurnStore = defineStore('turn', () => {
   const serverConfig = ref<ServerTurnConfig | null>(null)
 
   // ── Metered.ca built-in provider ──
+  // ICE servers come from the signaling server (server-side fetch); the API key
+  // never reaches the browser. `meteredExpiresAt` is a unix-second timestamp
+  // used by useRoom to schedule rotation ~10 min before the temp creds die.
   const meteredEnabled = ref(false)
-  const meteredApiUrl = ref('')
+  const meteredIceServers = ref<RTCIceServer[]>([])
+  const meteredExpiresAt  = ref(0)
 
   // Convenience: first URL from server (shown as placeholder / default label)
   const serverUrl = computed(() => serverConfig.value?.urls[0] ?? '')
@@ -46,9 +50,10 @@ export const useTurnStore = defineStore('turn', () => {
   // ── Effective config (what useWebRTC actually uses) ──────────────────────
   // Priority: useMetered > useCustom > serverConfig
   const effective = computed<{ urls: string[]; username?: string; credential?: string } | null>(() => {
-    // Metered is handled separately (fetched on-demand), return null here
+    // Metered is applied by useRoom using `meteredIceServers` directly, so
+    // skip the unified shape here.
     if (useMetered.value && meteredEnabled.value) {
-      return null  // useRoom will fetch from Metered API directly
+      return null
     }
     if (useCustom.value && customUrl.value.trim()) {
       return {
@@ -72,20 +77,22 @@ export const useTurnStore = defineStore('turn', () => {
     }
   }
 
-  function setMeteredConfig(enabled: boolean, apiUrl: string) {
-    meteredEnabled.value = enabled
-    meteredApiUrl.value = apiUrl
+  function setMeteredConfig(enabled: boolean, iceServers: RTCIceServer[], expiresAt: number) {
+    meteredEnabled.value     = enabled
+    meteredIceServers.value  = iceServers
+    meteredExpiresAt.value   = expiresAt
   }
 
   function reset() {
-    serverConfig.value = null
-    meteredEnabled.value = false
-    meteredApiUrl.value = ''
+    serverConfig.value       = null
+    meteredEnabled.value     = false
+    meteredIceServers.value  = []
+    meteredExpiresAt.value   = 0
   }
 
   return {
     serverConfig, serverUrl,
-    meteredEnabled, meteredApiUrl, useMetered,
+    meteredEnabled, meteredIceServers, meteredExpiresAt, useMetered,
     customUrl, customUsername, customCredential, useCustom,
     effective,
     setServerConfig, setMeteredConfig, reset,

@@ -124,3 +124,93 @@ html, body, #app {
 .v-field textarea {
   padding-inline-start: 4px !important;
 }
+
+/* Global dialog padding — compact, 5-10px on every side, never touching the edge */
+.v-overlay__content > .v-card {
+  padding: 8px !important;
+}
+.v-overlay__content > .v-card > .v-card-title,
+.v-overlay__content > .v-card > .v-card-text,
+.v-overlay__content > .v-card > .v-card-actions {
+  padding: 8px 10px !important;
+}
+.v-overlay__content > .v-card > .v-card-title {
+  padding-bottom: 6px !important;
+}
+.v-overlay__content > .v-card > .v-card-actions {
+  padding-top: 6px !important;
+  gap: 6px;
+}
+@media (max-width: 480px) {
+  .v-overlay__content > .v-card {
+    padding: 6px !important;
+  }
+  .v-overlay__content > .v-card > .v-card-title,
+  .v-overlay__content > .v-card > .v-card-text,
+  .v-overlay__content > .v-card > .v-card-actions {
+    padding: 6px 8px !important;
+  }
+}
+
+/* Popups / menus (language switcher, mention list, etc.) — keep text off the edge */
+.v-overlay__content > .v-list,
+.v-overlay__content > .v-sheet,
+.v-overlay__content > .v-card .v-list {
+  padding: 5px !important;
+}
+.v-overlay__content .v-list-item {
+  min-height: 32px;
+  padding-inline: 8px !important;
+}
+.v-overlay__content .v-list-item-title {
+  padding: 2px 4px;
+}
+
+/* Tooltip text — give content ≥5px inset */
+.v-overlay__content > .v-tooltip__content {
+  padding: 6px 10px !important;
+  border-radius: 6px;
+}
+
+/* Header text/buttons — ensure label like "Leave Room" has horizontal padding */
+.room-header .v-btn:not(.v-btn--icon),
+.admin-header .v-btn:not(.v-btn--icon) {
+  padding-inline: 8px !important;
+}
+
+/* Menu (overflow toolbar etc.) — small popups still get inner padding */
+.v-overlay__content > .v-menu,
+.v-overlay__content > .v-menu > .v-list,
+.v-overlay__content > .v-menu > .v-sheet {
+  padding: 5px !important;
+}
+
+/* @mention tag inline style */
+.mention {
+  display: inline-block;
+  background: #2a2a2a;
+  color: var(--dc-text);
+  padding: 1px 8px;
+  margin: 0 2px;
+  border-radius: 2px;
+  font-size: 0.86em;
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+.mention-self,
+.mention.mention-self {
+  background: var(--dc-gold);
+  color: #1A1A1A;
+}
+/* @everyone — highlighted on every viewer's screen, visually distinct from
+   the personal @me chip so it's obvious the sender addressed the whole room. */
+.mention-all,
+.mention.mention-all {
+  background: var(--dc-teal);
+  color: #1A1A1A;
+}
+.tiptap .mention {
+  cursor: default;
+  user-select: all;
+}

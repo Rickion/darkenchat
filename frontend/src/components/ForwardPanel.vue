@@ -54,7 +54,7 @@ function confirm() {
         :label="t('forward.select_all')"
         @update:model-value="toggleAll"
       />
-      <span class="count">{{ selected.size }} selected</span>
+      <span class="count">{{ t('forward.count_selected', { count: selected.size }) }}</span>
       <v-spacer />
       <v-text-field
         v-model="note"

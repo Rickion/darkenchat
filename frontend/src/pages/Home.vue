@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getRandomNickname, getRandomSeriesKey } from '@/assets/nicknames'
 import { useRoomStore } from '@/stores/room'
+import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -56,6 +57,11 @@ function enterRoom() {
 
 <template>
   <div class="home-layout">
+    <!-- Language switcher (top-right) -->
+    <div class="lang-corner">
+      <LanguageSwitcher size="small" />
+    </div>
+
     <!-- Left side: Create -->
     <div
       class="side left-side"
@@ -133,6 +139,23 @@ function enterRoom() {
   background: var(--dc-bg);
   overflow: hidden;
   display: flex;
+}
+
+/* Language switcher in top-right */
+.lang-corner {
+  position: fixed;
+  top: 8px;
+  right: 12px;
+  z-index: 200;
+  background: rgba(36, 36, 36, 0.72);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+}
+@media (max-width: 480px) {
+  .lang-corner {
+    top: 6px;
+    right: 8px;
+  }
 }
 
 /* Side panels */

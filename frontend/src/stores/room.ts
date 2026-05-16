@@ -21,6 +21,9 @@ export const useRoomStore = defineStore('room', () => {
   const members = ref<MemberInfo[]>([])
   const connected = ref(false)
   const reconnecting = ref(false)
+  // Per-room hard cap on chat messages per AI member. 0 = unlimited.
+  // Mirrors signaling Room.aiTurnLimit; updated on `joined` and `room_config`.
+  const aiTurnLimit = ref(0)
 
   const isChair = computed(() => clientId.value === chairId.value)
   const isCenter = computed(() => clientId.value === centerId.value)
@@ -35,6 +38,7 @@ export const useRoomStore = defineStore('room', () => {
     chairId: string
     nicknameSet: string
     members: MemberInfo[]
+    aiTurnLimit?: number
   }) {
     key.value = payload.key
     clientId.value = payload.clientId
@@ -43,6 +47,7 @@ export const useRoomStore = defineStore('room', () => {
     chairId.value = payload.chairId
     nicknameSet.value = payload.nicknameSet
     members.value = payload.members
+    aiTurnLimit.value = payload.aiTurnLimit ?? 0
     connected.value = true
     reconnecting.value = false
   }
@@ -78,6 +83,7 @@ export const useRoomStore = defineStore('room', () => {
     chairId.value = ''
     nicknameSet.value = 'nato'
     members.value = []
+    aiTurnLimit.value = 0
     connected.value = false
     reconnecting.value = false
   }
@@ -85,7 +91,7 @@ export const useRoomStore = defineStore('room', () => {
   return {
     pendingNickname,
     key, clientId, nickname, centerId, chairId,
-    nicknameSet, members, connected, reconnecting,
+    nicknameSet, members, connected, reconnecting, aiTurnLimit,
     isChair, isCenter, chairMember, usedNicknames,
     setRoom, addMember, removeMember, updateCenter, updateChair, updateMemberConn, reset,
   }

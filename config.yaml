@@ -23,10 +23,16 @@ ice:
     urls: []          # override with TURN_URLS env var (comma-separated)
     auth_secret: "${TURN_SECRET}"
     ttl_seconds: 3600
-  # Built-in TURN providers (optional)
+  # Built-in TURN provider: Metered.ca
+  # The signaling server fetches temporary credentials server-side on every
+  # /api/turn-metered request and returns the ICE server list directly — the
+  # API key never reaches the browser. Configure dashboard TURN_TIME (TTL) to
+  # match `ttl_seconds`; clients rotate creds 10 minutes before expiry.
   metered:
     enabled: false    # override with TURN_METERED_ENABLED env var
-    api_url: "${TURN_METERED_API}"
+    api_key: "${TURN_METERED_API_KEY}"    # Metered dashboard "API Key"
+    domain:  "${TURN_METERED_DOMAIN}"     # e.g. your-app.metered.live
+    ttl_seconds: 7200                     # 2 hours; must match dashboard TURN_TIME
 
 security:
   admin_token: "${ADMIN_TOKEN}"
@@ -37,7 +43,7 @@ security:
 
 room:
   max_members: 50
-  max_bot_members: 3
+  max_bot_members: 10
   heartbeat_interval_seconds: 3
   heartbeat_timeout_seconds: 10
 
