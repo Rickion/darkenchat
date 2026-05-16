@@ -1,5 +1,5 @@
 import type { Room } from './types.js'
-import { rooms, broadcast, send } from './rooms.js'
+import { rooms, broadcast } from './rooms.js'
 
 // peerId → score (only populated during election)
 const electionScores = new Map<string, { room: Room; score: number }>()

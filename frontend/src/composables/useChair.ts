@@ -10,12 +10,12 @@ export function useChair(send: (msg: C2S) => void) {
 
   function kick(targetId: string) {
     if (!roomStore.isChair) return
-    send({ type: 'kick' as never, roomKey: roomStore.key, targetId } as never)
+    send({ type: 'kick', roomKey: roomStore.key, targetId })
   }
 
   function endRoom() {
     if (!roomStore.isChair) return
-    send({ type: 'end_room' as never, roomKey: roomStore.key } as never)
+    send({ type: 'end_room', roomKey: roomStore.key })
   }
 
   return { kick, endRoom }

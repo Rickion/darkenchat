@@ -1,7 +1,5 @@
 import type { SwitchLog } from './types.js'
 
-const MAX_ENTRIES = 1000
-
 // Rolling log buffer
 const log: SwitchLog[] = []
 
@@ -16,9 +14,12 @@ interface RateLimitConfig {
   windowSeconds: number
   maxKeyProbes:  number
   banDurationSeconds: number
+  switchLogMaxEntries: number
 }
 
-let cfg: RateLimitConfig = { windowSeconds: 60, maxKeyProbes: 10, banDurationSeconds: 3600 }
+let cfg: RateLimitConfig = {
+  windowSeconds: 60, maxKeyProbes: 10, banDurationSeconds: 3600, switchLogMaxEntries: 1000,
+}
 
 export function configure(c: RateLimitConfig) {
   cfg = c
@@ -56,7 +57,7 @@ export function checkAndRecord(ip: string, toKey: string, action: SwitchLog['act
 }
 
 function pushLog(entry: SwitchLog) {
-  if (log.length >= MAX_ENTRIES) log.shift()
+  if (log.length >= cfg.switchLogMaxEntries) log.shift()
   log.push(entry)
 }
 

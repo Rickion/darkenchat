@@ -1,11 +1,17 @@
 import type { WebSocket } from '@fastify/websocket'
 
+// Wire-format types are shared with the browser; see shared/protocol.ts.
+export type { C2S, S2C, MemberInfo, RTCSignal } from './_shared/protocol.js'
+
 export interface Member {
   clientId: string
   nickname: string
   joinedAt: number
   isBot: boolean
   ws: WebSocket
+  // Wall-clock timestamp of the last heartbeat (or join). Used by the
+  // background sweep to evict members whose socket is silently dead.
+  lastSeen: number
 }
 
 export interface Room {
@@ -16,7 +22,13 @@ export interface Room {
   createdAt: number
   banned: boolean
   nicknameSet: string
-  recentLeft: Map<string, number>  // nickname -> timestamp (5min TTL)
+  // nickname -> { clientId, leftAt }. Lets a reconnecting member reclaim
+  // their previous identity by sending the old clientId back on join.
+  recentLeft: Map<string, { clientId: string; leftAt: number }>
+  // Per-room AI hard turn cap. Set by the chair; 0 means "no limit".
+  // When a bot's MCP-side send count reaches this, the MCP refuses further
+  // send_message calls and instructs the bot to leave.
+  aiTurnLimit: number
 }
 
 export interface SwitchLog {
@@ -26,14 +38,3 @@ export interface SwitchLog {
   action: 'probe' | 'join' | 'create'
   blocked: boolean
 }
-
-export type C2S =
-  | { type: 'join';        roomKey: string; nickname: string; isBot?: boolean; lastClientId?: string }
-  | { type: 'leave';       roomKey: string }
-  | { type: 'signal';      roomKey: string; to: string; payload: unknown }
-  | { type: 'score';       roomKey: string; score: number }
-  | { type: 'relay';       to: string; data: string }
-  | { type: 'member_conn'; clientId: string; connType: 'p2p' | 'turn' | 'relay' }
-  | { type: 'heartbeat' }
-  | { type: 'kick';        roomKey: string; targetId: string }
-  | { type: 'end_room';    roomKey: string }

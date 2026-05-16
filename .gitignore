@@ -5,3 +5,5 @@ dist
 darkenchat-prd.md
 TESTCASES.md
 TEST_REPORT.md
+# Materialised by predev/prebuild scripts — canonical source is shared/
+*/src/_shared/

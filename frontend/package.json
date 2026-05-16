@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "predev": "node ../shared/copy-into.mjs src/_shared",
     "dev": "vite",
+    "prebuild": "node ../shared/copy-into.mjs src/_shared",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview"
   },

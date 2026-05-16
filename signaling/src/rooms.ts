@@ -1,6 +1,5 @@
-import type { Room, Member } from './types.js'
+import type { Room, Member, S2C, MemberInfo } from './types.js'
 import { SERIES_KEYS } from './nicknames.js'
-import { nanoid } from 'nanoid'
 
 // In-memory store
 export const rooms = new Map<string, Room>()
@@ -26,6 +25,7 @@ export function getOrCreateRoom(key: string): Room {
       banned: false,
       nicknameSet: SERIES_KEYS[Math.floor(Math.random() * SERIES_KEYS.length)],
       recentLeft: new Map(),
+      aiTurnLimit: 0,    // 0 → unlimited until the chair sets one
     }
     rooms.set(key, room)
   }
@@ -43,8 +43,9 @@ export function removeMember(room: Room, clientId: string): Member | undefined {
   if (!member) return undefined
   room.members.delete(clientId)
 
-  // Track recent departure (5min TTL)
-  room.recentLeft.set(member.nickname, Date.now())
+  // Track recent departure so a reconnecting member can reclaim their clientId.
+  // TTL is enforced by the sweep in index.ts.
+  room.recentLeft.set(member.nickname, { clientId: member.clientId, leftAt: Date.now() })
 
   if (room.members.size === 0) {
     rooms.delete(room.key)
@@ -62,7 +63,7 @@ export function removeMember(room: Room, clientId: string): Member | undefined {
   return member
 }
 
-export function broadcast(room: Room, payload: unknown, exceptId?: string): void {
+export function broadcast(room: Room, payload: S2C, exceptId?: string): void {
   const data = JSON.stringify(payload)
   for (const member of room.members.values()) {
     if (member.clientId !== exceptId) {
@@ -71,11 +72,11 @@ export function broadcast(room: Room, payload: unknown, exceptId?: string): void
   }
 }
 
-export function send(member: Member, payload: unknown): void {
+export function send(member: Member, payload: S2C): void {
   try { member.ws.send(JSON.stringify(payload)) } catch { /* closed */ }
 }
 
-export function memberInfo(m: Member) {
+export function memberInfo(m: Member): MemberInfo {
   return {
     clientId: m.clientId,
     nickname: m.nickname,

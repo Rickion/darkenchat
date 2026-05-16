@@ -5,16 +5,48 @@ type SignalSender   = (to: string, payload: RTCSignal) => void
 type ChannelOpenCb  = (peerId: string) => void
 type ChannelCloseCb = (peerId: string) => void
 
-function getBaseIceServers(): RTCIceServer[] {
-  const servers: RTCIceServer[] = [
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:stun.l.google.com:19302' },
-  ]
-  // Dev-only: local TURN lets two same-machine browser tabs connect via relay
-  if (import.meta.env.DEV) {
-    servers.push({ urls: 'turn:127.0.0.1:3478', username: 'test', credential: 'test123' })
+// STUN list comes from the server (/api/ice) so it stays in lock-step with
+// config.yaml — no hardcode to drift. The fetch happens once per page load
+// and the result is cached; on failure we fall back to a built-in list so a
+// dev server outage doesn't break local development.
+const FALLBACK_STUN: RTCIceServer[] = [
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:stun.l.google.com:19302' },
+]
+let baseIceCache: RTCIceServer[] | null = null
+let baseIcePromise: Promise<RTCIceServer[]> | null = null
+
+export async function loadBaseIceServers(): Promise<RTCIceServer[]> {
+  if (baseIceCache) return baseIceCache
+  if (!baseIcePromise) {
+    baseIcePromise = fetch('/api/ice')
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then((j: { iceServers?: RTCIceServer[] }) => (j.iceServers?.length ? j.iceServers : FALLBACK_STUN))
+      .catch(e => { console.warn('[ice] /api/ice failed, using fallback:', e); return FALLBACK_STUN })
+      .then(servers => {
+        const out = [...servers]
+        if (import.meta.env.DEV) {
+          out.push({ urls: 'turn:127.0.0.1:3478', username: 'test', credential: 'test123' })
+        }
+        baseIceCache = out
+        return out
+      })
   }
-  return servers
+  return baseIcePromise
+}
+
+function getBaseIceServers(): RTCIceServer[] {
+  // Synchronous accessor for code paths that need an immediate value. If the
+  // async fetch hasn't completed yet, return the fallback rather than blocking
+  // RTCPeerConnection creation; `updateTurnServers` will refresh once the real
+  // list arrives.
+  if (baseIceCache) return baseIceCache
+  void loadBaseIceServers()
+  const out = [...FALLBACK_STUN]
+  if (import.meta.env.DEV) {
+    out.push({ urls: 'turn:127.0.0.1:3478', username: 'test', credential: 'test123' })
+  }
+  return out
 }
 
 const HEARTBEAT_MS = 3000
@@ -40,6 +72,29 @@ export function useWebRTC(
 
   function getIceServers(): RTCIceServer[] {
     return [...getBaseIceServers(), ...turnServers]
+  }
+
+  // Hot-swap TURN credentials on every live RTCPeerConnection.
+  //
+  // `setConfiguration` updates the iceServers list without disrupting an
+  // already-connected DataChannel — future ICE operations pick up the new
+  // creds. For peers currently routing through TURN (relay candidates),
+  // we ALSO call `restartIce()` so a fresh ICE exchange happens before the
+  // old TURN allocation expires; perfect-negotiation handles offer glare
+  // if both sides happen to restart simultaneously.
+  async function updateTurnServers(servers: RTCIceServer[]) {
+    turnServers = servers
+    const next = getIceServers()
+    for (const [peerId, pc] of peers) {
+      if (pc.connectionState === 'closed') continue
+      try { pc.setConfiguration({ iceServers: next }) }
+      catch (e) { console.warn('[rtc] setConfiguration failed for', peerId, e) }
+      try {
+        if (await detectConnectionType(peerId) === 'turn') {
+          pc.restartIce()
+        }
+      } catch { /* ignore */ }
+    }
   }
 
   let hbTimer: ReturnType<typeof setInterval> | null = null
@@ -198,11 +253,21 @@ export function useWebRTC(
   // Cleanup
   // ──────────────────────────────────────────────
   function closePeer(peerId: string) {
-    channels.get(peerId)?.close()
-    channels.delete(peerId)
+    // Evict synchronously and fire onChannelClose ourselves. The natural
+    // ch.onclose handler bails out via its `channels.get(peerId) === ch`
+    // guard once the map entry is gone, so without an explicit call here
+    // the room layer never learns the channel died — which is why a
+    // heartbeat-detected timeout used to leave the UI showing "P2P
+    // connected" until the user tried to send something.
+    const ch = channels.get(peerId)
+    if (ch) {
+      try { ch.close() } catch { /* ignore */ }
+      channels.delete(peerId)
+      lastHb.delete(peerId)
+      onChannelClose?.(peerId)
+    }
     peers.get(peerId)?.close()
     peers.delete(peerId)
-    lastHb.delete(peerId)
     makingOffer.delete(peerId)
   }
 
@@ -221,7 +286,9 @@ export function useWebRTC(
     closePeer,
     closeAll,
     setTurnServers,
+    updateTurnServers,
     detectConnectionType,
+    getIceServers,
     hasOpenChannel: (id: string) => channels.get(id)?.readyState === 'open',
     channelCount: () => channels.size,
   }

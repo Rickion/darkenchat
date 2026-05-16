@@ -1,3 +1,7 @@
+// Wire-level protocol types live in shared/ so the signaling server uses the
+// same definitions. Anything below is browser-only.
+export type { C2S, S2C, MemberInfo, RTCSignal } from '@/_shared/protocol'
+
 export type MessageType =
   | 'chat' | 'system' | 'forward' | 'file' | 'heartbeat' | 'ack'
   | 'poll' | 'canvas' | 'survey' | 'voice'
@@ -8,6 +12,25 @@ export interface FileMeta {
   size: number
   mime: string
   ownerId: string
+}
+
+export interface VoiceParticipant {
+  clientId: string
+  nickname: string
+  joinedAt: number
+}
+
+export interface VoiceSessionMeta {
+  voiceKind: 'session' | 'summary'
+  sessionId: string
+  initiatorId: string
+  initiatorNickname: string
+  startedAt: number
+  participants: VoiceParticipant[]
+  // session: filled in when the call ends
+  endedAt?: number
+  // summary: convenience pre-computed durationMs
+  durationMs?: number
 }
 
 export interface ForwardPayload {
@@ -27,45 +50,6 @@ export interface Message {
   forwardOf?: ForwardPayload
   isBot?: boolean
   meta?: Record<string, unknown>
-}
-
-export interface MemberInfo {
-  clientId: string
-  nickname: string
-  joinedAt: number
-  isBot?: boolean
-  isReturning?: boolean
-  connType?: 'p2p' | 'turn' | 'relay'
-}
-
-// Signaling protocol ─ Client → Server
-export type C2S =
-  | { type: 'join';      roomKey: string; nickname: string; isBot?: boolean }
-  | { type: 'leave';     roomKey: string }
-  | { type: 'signal';    roomKey: string; to: string; payload: RTCSignal }
-  | { type: 'score';     roomKey: string; score: number }
-  | { type: 'relay';     to: string; data: string }
-  | { type: 'heartbeat' }
-
-// Signaling protocol ─ Server → Client
-export type S2C =
-  | { type: 'joined';      clientId: string; nickname: string; centerId: string; chairId: string; members: MemberInfo[]; nicknameSet: string; isReturning?: boolean }
-  | { type: 'member_join'; member: MemberInfo }
-  | { type: 'member_left'; clientId: string; nickname: string }
-  | { type: 'member_conn'; clientId: string; connType: 'p2p' | 'turn' | 'relay' }
-  | { type: 'new_center';  centerId: string }
-  | { type: 'new_chair';   chairId: string; nickname: string }
-  | { type: 'signal';      from: string; payload: RTCSignal }
-  | { type: 'relay';       from: string; data: string }
-  | { type: 'kicked' }
-  | { type: 'room_ended' }
-  | { type: 'room_banned' }
-  | { type: 'error';       code: string }
-  | { type: 'ack' }
-
-export interface RTCSignal {
-  sdp?: RTCSessionDescriptionInit
-  candidate?: RTCIceCandidateInit
 }
 
 export interface SwitchLog {

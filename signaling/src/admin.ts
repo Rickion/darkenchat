@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
-import { rooms, broadcast, send } from './rooms.js'
-import { getLogs, getBanList, unbanIP, unbanKey, bannedKeys } from './guard.js'
+import { rooms, broadcast } from './rooms.js'
+import { getLogs, getBanList, unbanIP, unbanKey } from './guard.js'
 
 let adminToken = ''
 

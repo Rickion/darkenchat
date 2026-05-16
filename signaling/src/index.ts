@@ -37,7 +37,19 @@ const CORS_ORIGINS: string[] | true =
     ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
     : cfg?.server?.cors_origins ?? true
 const MAX_MEMBERS = cfg?.room?.max_members ?? 50
-const MAX_BOTS    = cfg?.room?.max_bot_members ?? 3
+const MAX_BOTS    = cfg?.room?.max_bot_members ?? 10
+// STUN list advertised by /api/ice so every client (browser + MCP) shares one
+// source of truth. Defaults match the project's historical hardcode.
+const STUN_URLS: string[] = cfg?.ice?.stun_urls ?? [
+  'stun:stun.cloudflare.com:3478',
+  'stun:stun.l.google.com:19302',
+]
+// How often the sweep runs, and how long a member can be silent before it
+// gets evicted. The sweep also drops recentLeft entries past their TTL so
+// the map doesn't grow unbounded.
+const HEARTBEAT_INTERVAL_MS = (cfg?.room?.heartbeat_interval_seconds ?? 3) * 1000
+const HEARTBEAT_TIMEOUT_MS  = (cfg?.room?.heartbeat_timeout_seconds  ?? 10) * 1000
+const RECENT_LEFT_TTL_MS    = 5 * 60 * 1000  // 5 min — matches the "returning member" window
 
 // TURN — env vars take precedence over config.yaml.
 // Auth: TURN_SECRET (HMAC, for coturn use-auth-secret) OR TURN_USERNAME+TURN_CREDENTIAL (static).
@@ -51,14 +63,23 @@ const TURN_USERNAME   = process.env.TURN_USERNAME   ?? ''
 const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL ?? ''
 const TURN_TTL        = cfg?.ice?.turn?.ttl_seconds ?? 3600
 
-// Metered.ca built-in TURN provider
-const METERED_ENABLED = process.env.TURN_METERED_ENABLED === 'true' || cfg?.ice?.metered?.enabled === true
-const METERED_API     = process.env.TURN_METERED_API ?? cfg?.ice?.metered?.api_url ?? ''
+// Metered.ca built-in TURN provider — server-side fetch only.
+// The API key never reaches the browser. Each /api/turn-metered call hits
+// Metered's credentials endpoint and returns the resulting ICE server list
+// plus an `expiresAt` (computed from METERED_TTL) so clients can rotate
+// before the temp credentials die.
+const METERED_API_KEY = process.env.TURN_METERED_API_KEY ?? cfg?.ice?.metered?.api_key ?? ''
+const METERED_DOMAIN  = process.env.TURN_METERED_DOMAIN  ?? cfg?.ice?.metered?.domain  ?? ''
+const METERED_TTL     = Number(process.env.TURN_METERED_TTL ?? cfg?.ice?.metered?.ttl_seconds ?? 7200)
+const METERED_ENABLED =
+  (process.env.TURN_METERED_ENABLED === 'true' || cfg?.ice?.metered?.enabled === true)
+  && !!METERED_API_KEY && !!METERED_DOMAIN
 
 configureGuard({
-  windowSeconds:     cfg?.security?.rate_limit?.window_seconds     ?? 60,
-  maxKeyProbes:      cfg?.security?.rate_limit?.max_key_probes      ?? 10,
-  banDurationSeconds: cfg?.security?.rate_limit?.ban_duration_seconds ?? 3600,
+  windowSeconds:       cfg?.security?.rate_limit?.window_seconds      ?? 60,
+  maxKeyProbes:        cfg?.security?.rate_limit?.max_key_probes      ?? 10,
+  banDurationSeconds:  cfg?.security?.rate_limit?.ban_duration_seconds ?? 3600,
+  switchLogMaxEntries: cfg?.log?.switch_log_max_entries               ?? 1000,
 })
 setAdminToken(ADMIN_TOKEN)
 
@@ -106,7 +127,7 @@ app.get('/api/rooms/:key', async (req, reply) => {
 app.post('/api/rooms', async (req, reply) => {
   const ip = req.ip
   const body = req.body as { key?: string } | null ?? {}
-  let key = (body.key ?? '').toUpperCase() || generateKey()
+  const key = (body.key ?? '').toUpperCase() || generateKey()
 
   if (checkAndRecord(ip, key, 'create')) {
     return reply.status(429).send({ error: 'Rate limited' })
@@ -121,6 +142,14 @@ app.post('/api/rooms', async (req, reply) => {
 
 // ─── Register admin routes ────────────────────────────────
 await registerAdminRoutes(app)
+
+// ─── ICE: shared STUN list ───────────────────────────────
+// Single source of truth for the STUN servers every client should use. Both
+// the browser and the MCP server fetch this on connect so they can't drift
+// from `config.yaml` independently.
+app.get('/api/ice', async (_req, reply) => {
+  return reply.send({ iceServers: STUN_URLS.map(urls => ({ urls })) })
+})
 
 // ─── TURN credentials ─────────────────────────────────────
 // Supports two auth modes:
@@ -150,11 +179,48 @@ app.get('/api/turn-credentials', async (req, reply) => {
 })
 
 // ─── Metered.ca built-in TURN provider ───────────────────────
-app.get('/api/turn-metered', async (req, reply) => {
-  if (!METERED_ENABLED || !METERED_API) {
+// Server-side fetch of temporary credentials. The API key stays here; the
+// browser only ever sees the resulting `iceServers` array and an `expiresAt`
+// timestamp used to schedule rotation ~10 min before credentials die.
+app.get('/api/turn-metered', async (_req, reply) => {
+  if (!METERED_ENABLED) {
     return reply.status(503).send({ error: 'Metered not configured' })
   }
-  return reply.send({ enabled: true, apiUrl: METERED_API })
+  const url = `https://${METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${encodeURIComponent(METERED_API_KEY)}`
+  // Hard timeout so a slow / hung upstream never holds the Fastify response
+  // open past the reverse-proxy read deadline (Caddy would otherwise close
+  // the connection and Cloudflare would return its own 502 with no body).
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), 6000)
+  try {
+    const r = await fetch(url, { signal: ac.signal })
+    if (!r.ok) {
+      const body = await r.text().catch(() => '')
+      app.log.warn({ status: r.status, body: body.slice(0, 200) }, 'metered upstream non-2xx')
+      return reply.status(502).send({ error: 'Metered upstream failed', status: r.status })
+    }
+    const text = await r.text()
+    let list: unknown
+    try { list = JSON.parse(text) }
+    catch {
+      app.log.warn({ body: text.slice(0, 200) }, 'metered upstream returned non-JSON')
+      return reply.status(502).send({ error: 'Metered returned non-JSON' })
+    }
+    if (!Array.isArray(list) || list.length === 0) {
+      return reply.status(502).send({ error: 'Metered returned empty list' })
+    }
+    const expiresAt = Math.floor(Date.now() / 1000) + METERED_TTL
+    return reply.send({ enabled: true, iceServers: list, expiresAt, ttl: METERED_TTL })
+  } catch (e: any) {
+    const aborted = e?.name === 'AbortError'
+    app.log.warn({ err: String(e?.message ?? e), aborted }, 'metered fetch failed')
+    return reply.status(502).send({
+      error: aborted ? 'Metered fetch timed out' : 'Metered fetch failed',
+      detail: String(e?.message ?? e),
+    })
+  } finally {
+    clearTimeout(timer)
+  }
 })
 
 // ─── WebSocket ────────────────────────────────────────────
@@ -200,14 +266,33 @@ app.register(async (fastify) => {
             return
           }
 
-          currentClientId = nanoid(12)
           currentRoomKey  = key
 
-          // Check if this nickname was in the room recently (within 5 min = returning member)
-          const RETURNING_TTL = 5 * 60 * 1000
-          const leftAt = room.recentLeft.get(msg.nickname)
-          const isReturning = !!leftAt && (Date.now() - leftAt) < RETURNING_TTL
-          if (isReturning) room.recentLeft.delete(msg.nickname)
+          // Returning-member detection. Prefer the explicit `lastClientId`
+          // handshake (immune to nickname collisions); fall back to nickname
+          // match for older clients that don't send it.
+          let isReturning = false
+          let reusedClientId: string | null = null
+          if (msg.lastClientId) {
+            for (const [nick, info] of room.recentLeft) {
+              if (info.clientId === msg.lastClientId && (Date.now() - info.leftAt) < RECENT_LEFT_TTL_MS) {
+                isReturning = true
+                reusedClientId = info.clientId
+                room.recentLeft.delete(nick)
+                break
+              }
+            }
+          }
+          if (!isReturning) {
+            const info = room.recentLeft.get(msg.nickname)
+            if (info && (Date.now() - info.leftAt) < RECENT_LEFT_TTL_MS) {
+              isReturning = true
+              reusedClientId = info.clientId
+              room.recentLeft.delete(msg.nickname)
+            }
+          }
+
+          currentClientId = reusedClientId ?? nanoid(12)
 
           // Dedup nickname against current members; append -2, -3, ... when colliding.
           // Returning members keep their name only if it's not in use by someone else.
@@ -225,6 +310,7 @@ app.register(async (fastify) => {
             joinedAt: Date.now(),
             isBot:    msg.isBot ?? false,
             ws:       socket,
+            lastSeen: Date.now(),
           }
 
           addMember(room, member)
@@ -238,6 +324,7 @@ app.register(async (fastify) => {
             chairId:     room.chairId,
             isReturning,
             nicknameSet: room.nicknameSet,
+            aiTurnLimit: room.aiTurnLimit,
             members:     [...room.members.values()].map(memberInfo),
           }))
 
@@ -256,7 +343,7 @@ app.register(async (fastify) => {
         }
 
         case 'signal': {
-          if (!currentRoomKey) return
+          if (!currentRoomKey || !currentClientId) return
           const room = rooms.get(currentRoomKey)
           if (!room) return
           const target = room.members.get(msg.to)
@@ -317,7 +404,30 @@ app.register(async (fastify) => {
           break
         }
 
+        case 'set_room_config': {
+          // Chair-only: per-room AI hard turn cap. 0 = unlimited. Stored on
+          // the room (so late joiners pick it up in their `joined` payload)
+          // and broadcast to every member (humans + bots) so the MCP-side
+          // RoomClient updates its enforcement state immediately.
+          if (!currentRoomKey || !currentClientId) return
+          const room = rooms.get(currentRoomKey)
+          if (!room || room.chairId !== currentClientId) return
+          const next = Math.max(0, Math.floor(Number(msg.aiTurnLimit) || 0))
+          if (next === room.aiTurnLimit) break
+          room.aiTurnLimit = next
+          broadcast(room, {
+            type:        'room_config',
+            aiTurnLimit: next,
+            byClientId:  currentClientId,
+          })
+          break
+        }
+
         case 'heartbeat': {
+          if (currentRoomKey && currentClientId) {
+            const m = rooms.get(currentRoomKey)?.members.get(currentClientId)
+            if (m) m.lastSeen = Date.now()
+          }
           socket.send(JSON.stringify({ type: 'ack' }))
           break
         }
@@ -363,6 +473,47 @@ app.register(async (fastify) => {
     }
   })
 })
+
+// ─── Heartbeat sweep ──────────────────────────────────────
+// Evict members whose socket is silently dead (no heartbeat past the
+// timeout) and prune `recentLeft` entries past the returning-member window.
+// Without this, half-open WS connections leave ghost members in the room
+// list and `recentLeft` grows unbounded.
+setInterval(() => {
+  const now = Date.now()
+  for (const room of [...rooms.values()]) {
+    // 1. Evict silent members
+    for (const member of [...room.members.values()]) {
+      if (now - member.lastSeen > HEARTBEAT_TIMEOUT_MS) {
+        try { member.ws.close() } catch { /* already dead */ }
+        const removed = removeMember(room, member.clientId)
+        if (removed && rooms.has(room.key)) {
+          broadcast(room, {
+            type:     'member_left',
+            clientId: removed.clientId,
+            nickname: removed.nickname,
+          })
+          // If chair was the one evicted, removeMember already promoted a
+          // successor — announce it.
+          if (room.chairId !== removed.clientId) {
+            const newChair = room.members.get(room.chairId)
+            if (newChair) {
+              broadcast(room, {
+                type:     'new_chair',
+                chairId:  newChair.clientId,
+                nickname: newChair.nickname,
+              })
+            }
+          }
+        }
+      }
+    }
+    // 2. Prune stale recentLeft entries
+    for (const [nick, info] of room.recentLeft) {
+      if (now - info.leftAt > RECENT_LEFT_TTL_MS) room.recentLeft.delete(nick)
+    }
+  }
+}, HEARTBEAT_INTERVAL_MS)
 
 // ─── Start ────────────────────────────────────────────────
 await app.listen({ host: HOST, port: PORT })
