@@ -25,7 +25,10 @@ export function useNotification() {
         body: plainText.slice(0, 60),
         icon: '/favicon.ico',
       })
-      n.onclick = () => { window.focus(); n.close() }
+      n.onclick = () => {
+        window.focus()
+        n.close()
+      }
     }
   }
 
@@ -35,7 +38,7 @@ export function useNotification() {
   }
 
   // Auto-clear when tab becomes visible
-  const stop = watch(visibility, (v) => {
+  const stop = watch(visibility, v => {
     if (v === 'visible') clearUnread()
   })
   onUnmounted(stop)

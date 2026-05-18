@@ -2,6 +2,7 @@ import type { WebSocket } from '@fastify/websocket'
 
 // Wire-format types are shared with the browser; see shared/protocol.ts.
 export type { C2S, S2C, MemberInfo, RTCSignal } from './_shared/protocol.js'
+export { PROTOCOL_VERSION } from './_shared/protocol.js'
 
 export interface Member {
   clientId: string

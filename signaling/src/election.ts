@@ -18,7 +18,7 @@ export function handleScore(roomKey: string, clientId: string, score: number): v
   const nonBotMembers = [...room.members.values()].filter(m => !m.isBot)
   const reported = nonBotMembers.filter(m => electionScores.has(m.clientId))
 
-  if (reported.length < nonBotMembers.length) return  // still waiting
+  if (reported.length < nonBotMembers.length) return // still waiting
 
   // Elect highest scorer
   let best = reported[0]
@@ -30,7 +30,7 @@ export function handleScore(roomKey: string, clientId: string, score: number): v
   // Clear scores
   for (const m of reported) electionScores.delete(m.clientId)
 
-  if (best.clientId === room.centerId) return  // no change
+  if (best.clientId === room.centerId) return // no change
 
   room.centerId = best.clientId
   broadcast(room, { type: 'new_center', centerId: best.clientId })

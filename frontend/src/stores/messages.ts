@@ -16,7 +16,9 @@ function loadFromSession(roomKey: string): Message[] {
 function saveToSession(roomKey: string, messages: Message[]) {
   try {
     sessionStorage.setItem(SESSION_KEY_PREFIX + roomKey, JSON.stringify(messages))
-  } catch { /* quota exceeded – ignore */ }
+  } catch {
+    /* quota exceeded – ignore */
+  }
 }
 
 export const useMessagesStore = defineStore('messages', () => {
@@ -26,7 +28,7 @@ export const useMessagesStore = defineStore('messages', () => {
   // Local-only delivery metadata — NOT serialised/transmitted.
   // failedIds: own messages that couldn't be delivered (show resend button).
   // catchupIds: messages received as catch-up history (blink animation on arrival).
-  const failedIds  = reactive(new Set<string>())
+  const failedIds = reactive(new Set<string>())
   const catchupIds = reactive(new Set<string>())
 
   function load(roomKey: string) {
@@ -78,5 +80,17 @@ export const useMessagesStore = defineStore('messages', () => {
     currentRoomKey.value = ''
   }
 
-  return { messages, currentRoomKey, failedIds, catchupIds, load, add, update, markFailed, clearFailed, markCatchup, clear }
+  return {
+    messages,
+    currentRoomKey,
+    failedIds,
+    catchupIds,
+    load,
+    add,
+    update,
+    markFailed,
+    clearFailed,
+    markCatchup,
+    clear,
+  }
 })

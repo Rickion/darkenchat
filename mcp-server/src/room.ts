@@ -16,10 +16,11 @@ const HEARTBEAT_MS = 3000
 // never silently stuck.
 const CHANNEL_OPEN_TIMEOUT_MS = 10_000
 // The AI has NO hard send cap any more. It still counts its own turns, and
-// once the count reaches this threshold the MCP server starts attaching a
-// convergence reminder to every send_message result so the AI knows to wrap
-// the discussion up. This notice is generated locally by the MCP server and
-// is unrelated to the room's chat history. Configurable via env.
+// every Nth turn (N = CONVERGE_TURNS) the MCP server attaches a one-shot
+// convergence reminder to that send_message result — i.e. fires at turn
+// 12/24/36/…, not on every send past 12 — so the nudge stays visible but
+// doesn't become noise. The notice is generated locally by the MCP server
+// and is unrelated to the room's chat history. Configurable via env.
 const CONVERGE_TURNS = Math.max(1, Number(process.env.DARKENCHAT_CONVERGE_TURNS ?? '12') || 12)
 // History buffer cap for tally / get_messages / wait_for_mention.
 const HISTORY_CAP = 500
@@ -32,8 +33,10 @@ const HISTORY_CAP = 500
 // configurable (defaults to chat.darken.cc).
 const DEFAULT_DOMAIN = process.env.DARKENCHAT_DEFAULT_DOMAIN ?? 'chat.darken.cc'
 const CUSTOM_TURN_URLS: string[] = (process.env.DARKENCHAT_TURN_URLS ?? '')
-  .split(',').map(s => s.trim()).filter(Boolean)
-const CUSTOM_TURN_USERNAME   = process.env.DARKENCHAT_TURN_USERNAME   ?? ''
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean)
+const CUSTOM_TURN_USERNAME = process.env.DARKENCHAT_TURN_USERNAME ?? ''
 const CUSTOM_TURN_CREDENTIAL = process.env.DARKENCHAT_TURN_CREDENTIAL ?? ''
 export const HAS_CUSTOM_TURN = CUSTOM_TURN_URLS.length > 0
 
@@ -46,7 +49,11 @@ export const HAS_CUSTOM_TURN = CUSTOM_TURN_URLS.length > 0
 export function isServerAllowed(serverUrl: string): { ok: true } | { ok: false; reason: string } {
   if (HAS_CUSTOM_TURN) return { ok: true }
   let host: string
-  try { host = new URL(serverUrl).hostname } catch { return { ok: false, reason: `Invalid serverUrl: ${serverUrl}` } }
+  try {
+    host = new URL(serverUrl).hostname
+  } catch {
+    return { ok: false, reason: `Invalid serverUrl: ${serverUrl}` }
+  }
   if (host === DEFAULT_DOMAIN) return { ok: true }
   return {
     ok: false,
@@ -54,13 +61,7 @@ export function isServerAllowed(serverUrl: string): { ok: true } | { ok: false; 
   }
 }
 
-export type RoomStatus =
-  | 'connecting'
-  | 'connected'
-  | 'kicked'
-  | 'room_ended'
-  | 'room_banned'
-  | 'disconnected'
+export type RoomStatus = 'connecting' | 'connected' | 'kicked' | 'room_ended' | 'room_banned' | 'disconnected'
 
 export interface RoomMember {
   clientId: string
@@ -71,7 +72,7 @@ export interface RoomMember {
 
 // Outbound send result. The AI no longer has a hard cap; `turnCount` is its
 // running self-count and `convergeNotice` is the MCP-local nudge that appears
-// once the count crosses CONVERGE_TURNS.
+// on every Nth turn (N = CONVERGE_TURNS), i.e. at turn 12/24/36/….
 export interface SendOk {
   ok: true
   transport: 'p2p' | 'relay'
@@ -83,11 +84,11 @@ export interface SendOk {
 }
 
 export interface RoomSession {
-  clientId:    string
-  nickname:    string   // ← server-assigned (may differ from requested due to dedup)
+  clientId: string
+  nickname: string // ← server-assigned (may differ from requested due to dedup)
   nicknameSet: string
-  roomKey:     string
-  members:     RoomMember[]
+  roomKey: string
+  members: RoomMember[]
 }
 
 export interface MentionRef {
@@ -95,23 +96,19 @@ export interface MentionRef {
   nickname: string
 }
 
-import {
-  MENTION_ALL_ID,
-  MENTION_ALL_AI_ID,
-  MENTION_ALL_ALIASES,
-  MENTION_ALL_AI_ALIASES,
-} from './_shared/mentions.js'
+import { MENTION_ALL_ID, MENTION_ALL_AI_ID, MENTION_ALL_ALIASES, MENTION_ALL_AI_ALIASES } from './_shared/mentions.js'
+import { PROTOCOL_VERSION } from './_shared/protocol.js'
 export { MENTION_ALL_ID, MENTION_ALL_AI_ID }
 
 export interface IncomingMessage {
-  from:        string
-  fromId:      string
-  timestamp:   number
-  content:     string      // plain text, HTML stripped (mention text "@Nick" preserved)
-  isSystem:    boolean
-  mentions?:   MentionRef[]
+  from: string
+  fromId: string
+  timestamp: number
+  content: string // plain text, HTML stripped (mention text "@Nick" preserved)
+  isSystem: boolean
+  mentions?: MentionRef[]
   mentionedMe?: boolean
-  transport?:  'p2p' | 'relay'
+  transport?: 'p2p' | 'relay'
 }
 
 type MessageListener = (msg: IncomingMessage) => void
@@ -120,14 +117,18 @@ type MessageListener = (msg: IncomingMessage) => void
 // HTML helpers
 // ────────────────────────────────────────────────────────────────────
 function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, c => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>
-  )[c])
+  return s.replace(
+    /[&<>"']/g,
+    c => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }) as Record<string, string>)[c],
+  )
 }
 function decodeHtmlAttr(s: string): string {
   return s
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
 }
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -145,7 +146,7 @@ function parseMentions(html: string): MentionRef[] {
   while ((match = re.exec(html))) {
     const tag = match[0]
     if (!/class\s*=\s*"[^"]*\bmention\b/.test(tag)) continue
-    const idMatch    = tag.match(/data-mention-id\s*=\s*"([^"]*)"/)
+    const idMatch = tag.match(/data-mention-id\s*=\s*"([^"]*)"/)
     const labelMatch = tag.match(/data-label\s*=\s*"([^"]*)"/)
     if (!idMatch) continue
     let label = labelMatch?.[1] ?? ''
@@ -204,9 +205,12 @@ function buildContent(plain: string, mentions: MentionRef[] | undefined, members
   let html = escapeHtml(plain)
   for (const ref of resolved) {
     const nickHtml = escapeHtml(ref.nickname)
-    const idAttr   = escapeHtml(ref.clientId)
+    const idAttr = escapeHtml(ref.clientId)
     const re = new RegExp('@' + escapeRegex(nickHtml) + '(?![\\w-])', 'g')
-    html = html.replace(re, `<span class="mention" data-mention-id="${idAttr}" data-label="${nickHtml}">@${nickHtml}</span>`)
+    html = html.replace(
+      re,
+      `<span class="mention" data-mention-id="${idAttr}" data-label="${nickHtml}">@${nickHtml}</span>`,
+    )
   }
   return '<p>' + html.replace(/\n/g, '</p><p>') + '</p>'
 }
@@ -248,10 +252,12 @@ async function fetchIceServers(serverUrl: string): Promise<IceFetchResult> {
     try {
       const r = await fetch(`${apiBase}/ice`)
       if (r.ok) {
-        const cfg = await r.json() as { iceServers?: RTCIceServer[] }
+        const cfg = (await r.json()) as { iceServers?: RTCIceServer[] }
         if (Array.isArray(cfg.iceServers) && cfg.iceServers.length) ice = [...cfg.iceServers]
       }
-    } catch { /* keep fallback */ }
+    } catch {
+      /* keep fallback */
+    }
   }
 
   // Custom TURN via env wins outright — and means we skip the server-provided
@@ -259,8 +265,8 @@ async function fetchIceServers(serverUrl: string): Promise<IceFetchResult> {
   // unlocks joining rooms on arbitrary signaling servers.
   if (HAS_CUSTOM_TURN) {
     ice.push({
-      urls:       CUSTOM_TURN_URLS,
-      username:   CUSTOM_TURN_USERNAME   || undefined,
+      urls: CUSTOM_TURN_URLS,
+      username: CUSTOM_TURN_USERNAME || undefined,
       credential: CUSTOM_TURN_CREDENTIAL || undefined,
     })
     return { ice, expiresAt: 0 }
@@ -272,7 +278,7 @@ async function fetchIceServers(serverUrl: string): Promise<IceFetchResult> {
   try {
     const r = await fetch(`${apiBase}/turn-metered`)
     if (r.ok) {
-      const cfg = await r.json() as {
+      const cfg = (await r.json()) as {
         enabled?: boolean
         iceServers?: RTCIceServer[]
         expiresAt?: number
@@ -281,22 +287,26 @@ async function fetchIceServers(serverUrl: string): Promise<IceFetchResult> {
         return { ice: [...ice, ...cfg.iceServers], expiresAt: cfg.expiresAt ?? 0 }
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // Priority 2: self-hosted TURN
   try {
     const r = await fetch(`${apiBase}/turn-credentials`)
     if (r.ok) {
-      const creds = await r.json() as { urls?: string | string[]; username?: string; credential?: string }
+      const creds = (await r.json()) as { urls?: string | string[]; username?: string; credential?: string }
       if (creds.urls && (Array.isArray(creds.urls) ? creds.urls.length : creds.urls)) {
         ice.push({
-          urls:       creds.urls as string | string[],
-          username:   creds.username,
+          urls: creds.urls as string | string[],
+          username: creds.username,
           credential: creds.credential,
         })
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   return { ice, expiresAt: 0 }
 }
@@ -316,7 +326,7 @@ export class RoomClient {
   private waiters: Array<{
     matcher: (m: IncomingMessage) => boolean
     resolve: (msgs: IncomingMessage[]) => void
-    timer:   NodeJS.Timeout
+    timer: NodeJS.Timeout
   }> = []
   private hbTimer: NodeJS.Timeout | null = null
   private channelOpenTimer: NodeJS.Timeout | null = null
@@ -338,8 +348,8 @@ export class RoomClient {
   // RoomClient so tally + waitForMention + get_messages share one view.
   private history: IncomingMessage[] = []
   // Outbound turn counter — the AI's own running self-count. There is no
-  // hard *AI-level* cap; once it reaches CONVERGE_TURNS the send_message
-  // result carries a convergence reminder (see buildSendResult).
+  // hard *AI-level* cap; on every multiple of CONVERGE_TURNS the
+  // send_message result carries a convergence reminder (see buildSendResult).
   private sentCount = 0
   // Per-room hard cap on this AI's chat-message count, set by the human chair
   // via `set_room_config`. 0 means "no limit". When `sentCount` reaches this,
@@ -349,11 +359,21 @@ export class RoomClient {
   private consensusEmitted = false
 
   // Public introspection -----------------------------------------------------
-  getStatus():  RoomStatus     { return this.status }
-  getSession(): RoomSession | null { return this.session }
-  getHistory(): IncomingMessage[] { return this.history }
-  turnInfo():   { count: number; convergeAt: number; roomLimit: number } { return { count: this.sentCount, convergeAt: CONVERGE_TURNS, roomLimit: this.roomTurnLimit } }
-  getRoomTurnLimit(): number { return this.roomTurnLimit }
+  getStatus(): RoomStatus {
+    return this.status
+  }
+  getSession(): RoomSession | null {
+    return this.session
+  }
+  getHistory(): IncomingMessage[] {
+    return this.history
+  }
+  turnInfo(): { count: number; convergeAt: number; roomLimit: number } {
+    return { count: this.sentCount, convergeAt: CONVERGE_TURNS, roomLimit: this.roomTurnLimit }
+  }
+  getRoomTurnLimit(): number {
+    return this.roomTurnLimit
+  }
 
   /**
    * Whether *this* AI is the panel chairperson — by default the first AI to
@@ -367,10 +387,11 @@ export class RoomClient {
     const myJoinedAt = me?.joinedAt ?? 0
     const bots = s.members.filter(m => m.isBot)
     if (!bots.some(b => b.clientId === s.clientId)) return false
-    return bots.every(b =>
-      b.clientId === s.clientId ||
-      (b.joinedAt ?? 0) > myJoinedAt ||
-      ((b.joinedAt ?? 0) === myJoinedAt && s.clientId < b.clientId),
+    return bots.every(
+      b =>
+        b.clientId === s.clientId ||
+        (b.joinedAt ?? 0) > myJoinedAt ||
+        ((b.joinedAt ?? 0) === myJoinedAt && s.clientId < b.clientId),
     )
   }
   computeTally(): Tally | null {
@@ -390,7 +411,7 @@ export class RoomClient {
   async join(serverUrl: string, roomKey: string, nickname = 'AI'): Promise<RoomSession> {
     this.serverUrl = serverUrl
     const fetched = await fetchIceServers(serverUrl)
-    this.iceServers  = fetched.ice
+    this.iceServers = fetched.ice
     this.iceExpiresAt = fetched.expiresAt
     this.scheduleIceRotation()
 
@@ -398,30 +419,36 @@ export class RoomClient {
       this.ws = new WebSocket(serverUrl)
 
       this.ws.on('open', () => {
-        this.ws.send(JSON.stringify({
-          type: 'join',
-          roomKey: roomKey.toUpperCase(),
-          nickname,
-          isBot: true,
-        }))
+        this.ws.send(
+          JSON.stringify({
+            type: 'join',
+            roomKey: roomKey.toUpperCase(),
+            nickname,
+            isBot: true,
+            protocolVersion: PROTOCOL_VERSION,
+          }),
+        )
       })
 
-      this.ws.on('message', async (raw) => {
+      this.ws.on('message', async raw => {
         let msg: any
-        try { msg = JSON.parse(raw.toString()) } catch { return }
+        try {
+          msg = JSON.parse(raw.toString())
+        } catch {
+          return
+        }
 
         switch (msg.type) {
-
           case 'joined': {
             this.session = {
-              clientId:    msg.clientId,
-              nickname:    msg.nickname ?? nickname,
+              clientId: msg.clientId,
+              nickname: msg.nickname ?? nickname,
               nicknameSet: msg.nicknameSet ?? 'nato',
-              roomKey:     roomKey.toUpperCase(),
-              members:     msg.members ?? [],
+              roomKey: roomKey.toUpperCase(),
+              members: msg.members ?? [],
             }
             this.centerId = msg.centerId
-            this.status   = 'connected'
+            this.status = 'connected'
             // Pick up the per-room hard turn cap set by the chair (0 = none).
             this.roomTurnLimit = Math.max(0, Math.floor(Number(msg.aiTurnLimit) || 0))
 
@@ -456,15 +483,16 @@ export class RoomClient {
             this.session?.members.push(msg.member)
             // Surface to listeners + waiters so AIs running expert-panel
             // scripts can react ("a new expert joined, brief them").
-            this.emitSystem(`${msg.member?.nickname ?? msg.member?.clientId ?? 'A new member'} joined the room`, msg.member?.nickname ?? 'system')
+            this.emitSystem(
+              `${msg.member?.nickname ?? msg.member?.clientId ?? 'A new member'} joined the room`,
+              msg.member?.nickname ?? 'system',
+            )
             break
           }
 
           case 'member_left': {
             if (this.session) {
-              this.session.members = this.session.members.filter(
-                m => m.clientId !== msg.clientId,
-              )
+              this.session.members = this.session.members.filter(m => m.clientId !== msg.clientId)
             }
             // Surface to the AI as a system event so get_messages reflects it.
             this.emitSystem(`${msg.nickname ?? msg.clientId} left the room`, msg.nickname ?? '')
@@ -506,10 +534,16 @@ export class RoomClient {
             if (next === 0) {
               this.emitSystem('Chair removed the AI hard turn cap (now unlimited).', 'system')
             } else {
-              this.emitSystem(`Chair set the AI hard turn cap to ${next} (you have spoken ${this.sentCount}).`, 'system')
+              this.emitSystem(
+                `Chair set the AI hard turn cap to ${next} (you have spoken ${this.sentCount}).`,
+                'system',
+              )
             }
             if (next > 0 && this.sentCount >= next && (prev === 0 || this.sentCount < prev || prev > next)) {
-              this.emitSystem(`ROOM_LIMIT_REACHED: ${this.sentCount}/${next}. Stop sending and call leave_room.`, 'system')
+              this.emitSystem(
+                `ROOM_LIMIT_REACHED: ${this.sentCount}/${next}. Stop sending and call leave_room.`,
+                'system',
+              )
             }
             break
           }
@@ -535,8 +569,20 @@ export class RoomClient {
           }
 
           case 'error': {
-            // e.g. rate_limited
-            reject(new Error(`signaling error: ${msg.code}`))
+            // Surfaced verbatim to the MCP host. `protocol_version_mismatch`
+            // means this MCP build is incompatible with the signaling server —
+            // user must upgrade the MCP package. Others (rate_limited, room_full,
+            // bot_limit) are situational.
+            if (msg.code === 'protocol_version_mismatch') {
+              reject(
+                new Error(
+                  `protocol_version_mismatch: this MCP server speaks protocol v${PROTOCOL_VERSION} ` +
+                    `but the signaling server expects a different version. Upgrade the darkenchat MCP package.`,
+                ),
+              )
+            } else {
+              reject(new Error(`signaling error: ${msg.code}`))
+            }
             break
           }
         }
@@ -545,7 +591,7 @@ export class RoomClient {
       this.ws.on('close', () => {
         if (this.status === 'connected') this.terminate('disconnected')
       })
-      this.ws.on('error', (err) => {
+      this.ws.on('error', err => {
         if (!this.session) reject(err)
       })
     })
@@ -565,12 +611,14 @@ export class RoomClient {
 
     this.pc.onicecandidate = ({ candidate }: any) => {
       if (candidate) {
-        this.ws.send(JSON.stringify({
-          type: 'signal',
-          roomKey: this.session!.roomKey,
-          to: centerId,
-          payload: { candidate: candidate.toJSON() },
-        }))
+        this.ws.send(
+          JSON.stringify({
+            type: 'signal',
+            roomKey: this.session!.roomKey,
+            to: centerId,
+            payload: { candidate: candidate.toJSON() },
+          }),
+        )
       }
     }
 
@@ -589,14 +637,19 @@ export class RoomClient {
       try {
         this.makingOffer = true
         await this.pc.setLocalDescription()
-        this.ws.send(JSON.stringify({
-          type: 'signal',
-          roomKey: this.session!.roomKey,
-          to: centerId,
-          payload: { sdp: this.pc.localDescription },
-        }))
-      } catch { /* swallow — handleSignal / armChannelTimeout will recover */ }
-      finally { this.makingOffer = false }
+        this.ws.send(
+          JSON.stringify({
+            type: 'signal',
+            roomKey: this.session!.roomKey,
+            to: centerId,
+            payload: { sdp: this.pc.localDescription },
+          }),
+        )
+      } catch {
+        /* swallow — handleSignal / armChannelTimeout will recover */
+      } finally {
+        this.makingOffer = false
+      }
     }
 
     // Failed PC → outbound relay fallback. The center pre-registered us in
@@ -611,9 +664,20 @@ export class RoomClient {
   }
 
   private closePeer() {
-    if (this.channelOpenTimer) { clearTimeout(this.channelOpenTimer); this.channelOpenTimer = null }
-    try { this.channel?.close() } catch { /* ignore */ }
-    try { this.pc?.close() }      catch { /* ignore */ }
+    if (this.channelOpenTimer) {
+      clearTimeout(this.channelOpenTimer)
+      this.channelOpenTimer = null
+    }
+    try {
+      this.channel?.close()
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.pc?.close()
+    } catch {
+      /* ignore */
+    }
     this.channel = null
     this.pc = null
   }
@@ -621,7 +685,10 @@ export class RoomClient {
   private setupChannel(ch: RTCDataChannel) {
     this.channel = ch
     ch.onopen = () => {
-      if (this.channelOpenTimer) { clearTimeout(this.channelOpenTimer); this.channelOpenTimer = null }
+      if (this.channelOpenTimer) {
+        clearTimeout(this.channelOpenTimer)
+        this.channelOpenTimer = null
+      }
     }
     ch.onclose = () => {
       // P2P died after being established → flip outbound to relay. Center's
@@ -629,7 +696,14 @@ export class RoomClient {
       this.relayEnabled = true
     }
     ch.onmessage = ({ data }: any) => {
-      if (data === '__hb__') { try { ch.send('__ack__') } catch { /* ignore */ } ; return }
+      if (data === '__hb__') {
+        try {
+          ch.send('__ack__')
+        } catch {
+          /* ignore */
+        }
+        return
+      }
       if (data === '__ack__') return
       this.handleData('', String(data), 'p2p')
     }
@@ -649,29 +723,32 @@ export class RoomClient {
   // Data handling ------------------------------------------------------------
   private handleData(_fromId: string, raw: string, transport: 'p2p' | 'relay') {
     let parsed: any
-    try { parsed = JSON.parse(raw) } catch { return }
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return
+    }
 
     // Drop control plane (file/voice/forward) — AI can't act on these meaningfully.
     if (parsed.type !== 'chat' && parsed.type !== 'system') return
 
     const rawHtml = typeof parsed.content === 'string' ? parsed.content : ''
     const mentions = parseMentions(rawHtml)
-    const plain    = rawHtml.replace(/<[^>]*>/g, '')
+    const plain = rawHtml.replace(/<[^>]*>/g, '')
 
     const me = this.session?.clientId
     // @everyone targets every member and @all-AI targets every bot — since the
     // MCP client is always a bot, both sentinels count as mentioning me too.
-    const mentionedMe = !!me && mentions.some(m =>
-      m.clientId === me || m.clientId === MENTION_ALL_ID || m.clientId === MENTION_ALL_AI_ID,
-    )
+    const mentionedMe =
+      !!me && mentions.some(m => m.clientId === me || m.clientId === MENTION_ALL_ID || m.clientId === MENTION_ALL_AI_ID)
 
     const out: IncomingMessage = {
-      from:      parsed.from ?? '',
-      fromId:    parsed.fromId ?? '',
+      from: parsed.from ?? '',
+      fromId: parsed.fromId ?? '',
       timestamp: parsed.timestamp ?? Date.now(),
-      content:   plain,
-      isSystem:  !!parsed.isSystem,
-      mentions:  mentions.length ? mentions : undefined,
+      content: plain,
+      isSystem: !!parsed.isSystem,
+      mentions: mentions.length ? mentions : undefined,
       mentionedMe: mentionedMe || undefined,
       transport,
     }
@@ -694,25 +771,29 @@ export class RoomClient {
     const pc = this.pc!
 
     if (payload.sdp) {
-      const offerCollision = payload.sdp.type === 'offer' &&
-        (this.makingOffer || pc.signalingState !== 'stable')
+      const offerCollision = payload.sdp.type === 'offer' && (this.makingOffer || pc.signalingState !== 'stable')
       const ignoreOffer = !this.polite && offerCollision
       if (ignoreOffer) return
 
       await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp))
       if (payload.sdp.type === 'offer') {
         await pc.setLocalDescription()
-        this.ws.send(JSON.stringify({
-          type:    'signal',
-          roomKey: this.session!.roomKey,
-          to:      fromId,
-          payload: { sdp: pc.localDescription },
-        }))
+        this.ws.send(
+          JSON.stringify({
+            type: 'signal',
+            roomKey: this.session!.roomKey,
+            to: fromId,
+            payload: { sdp: pc.localDescription },
+          }),
+        )
       }
     }
     if (payload.candidate) {
-      try { await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)) }
-      catch { /* stale */ }
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(payload.candidate))
+      } catch {
+        /* stale */
+      }
     }
   }
 
@@ -721,10 +802,10 @@ export class RoomClient {
   private emitSystem(text: string, from: string) {
     const out: IncomingMessage = {
       from,
-      fromId:    'system',
+      fromId: 'system',
       timestamp: Date.now(),
-      content:   text,
-      isSystem:  true,
+      content: text,
+      isSystem: true,
     }
     this.pushHistory(out)
     for (const fn of this.listeners) fn(out)
@@ -771,19 +852,30 @@ export class RoomClient {
   private terminate(status: Exclude<RoomStatus, 'connecting' | 'connected'>) {
     if (!this.isActive()) return
     this.status = status
-    if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null }
-    if (this.rotationTimer) { clearTimeout(this.rotationTimer); this.rotationTimer = null }
+    if (this.hbTimer) {
+      clearInterval(this.hbTimer)
+      this.hbTimer = null
+    }
+    if (this.rotationTimer) {
+      clearTimeout(this.rotationTimer)
+      this.rotationTimer = null
+    }
     this.closePeer()
     try {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: 'leave', roomKey: this.session?.roomKey }))
         this.ws.close()
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     // Unblock any in-flight waiters so the AI's long-poll doesn't hang past
     // the room's lifetime.
     if (this.waiters.length > 0) {
-      for (const w of this.waiters) { clearTimeout(w.timer); w.resolve([]) }
+      for (const w of this.waiters) {
+        clearTimeout(w.timer)
+        w.resolve([])
+      }
       this.waiters = []
     }
   }
@@ -795,12 +887,17 @@ export class RoomClient {
   // the new servers without disturbing the open DataChannel; restartIce()
   // is fired only when we are currently routing through the relay.
   private scheduleIceRotation() {
-    if (this.rotationTimer) { clearTimeout(this.rotationTimer); this.rotationTimer = null }
+    if (this.rotationTimer) {
+      clearTimeout(this.rotationTimer)
+      this.rotationTimer = null
+    }
     if (!this.iceExpiresAt) return
     const now = Math.floor(Date.now() / 1000)
     if (this.iceExpiresAt <= now) return
     const refreshInS = Math.max(5, this.iceExpiresAt - now - 600)
-    this.rotationTimer = setTimeout(() => { this.rotateIceServers().catch(() => {}) }, refreshInS * 1000)
+    this.rotationTimer = setTimeout(() => {
+      this.rotateIceServers().catch(() => {})
+    }, refreshInS * 1000)
   }
 
   private async rotateIceServers() {
@@ -812,19 +909,27 @@ export class RoomClient {
       // disabled), don't churn the connection — just keep the old creds and
       // give up scheduling.
       if (!fetched.expiresAt) return
-      this.iceServers   = fetched.ice
+      this.iceServers = fetched.ice
       this.iceExpiresAt = fetched.expiresAt
       const pc = this.pc as any
       if (pc) {
-        try { pc.setConfiguration?.({ iceServers: this.iceServers }) }
-        catch (e) { /* @roamhq/wrtc may not implement setConfiguration; falls through */ void e }
+        try {
+          pc.setConfiguration?.({ iceServers: this.iceServers })
+        } catch (e) {
+          /* @roamhq/wrtc may not implement setConfiguration; falls through */ void e
+        }
         // Restart ICE only if we look like we're using TURN relay right now.
         if (await this.isUsingRelay()) {
-          try { pc.restartIce?.() } catch { /* ignore */ }
+          try {
+            pc.restartIce?.()
+          } catch {
+            /* ignore */
+          }
         }
       }
-    } catch { /* fall through to retry */ }
-    finally {
+    } catch {
+      /* fall through to retry */
+    } finally {
       this.scheduleIceRotation()
     }
   }
@@ -839,36 +944,47 @@ export class RoomClient {
       const stats = await pc.getStats()
       for (const [, r] of stats) {
         if (r.type === 'candidate-pair' && r.nominated) {
-          const local  = stats.get(r.localCandidateId)
+          const local = stats.get(r.localCandidateId)
           const remote = stats.get(r.remoteCandidateId)
           if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') return true
           return false
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return false
   }
 
   private startHeartbeat() {
     this.hbTimer = setInterval(() => {
-      try { this.ws.send(JSON.stringify({ type: 'heartbeat' })) } catch { /* ignore */ }
+      try {
+        this.ws.send(JSON.stringify({ type: 'heartbeat' }))
+      } catch {
+        /* ignore */
+      }
     }, HEARTBEAT_MS)
   }
 
   // Builds a successful send result, bumping the turn counter and attaching a
-  // MCP-local convergence reminder once the AI has spoken CONVERGE_TURNS times.
-  // The notice is generated here, by the MCP server — it never enters the
-  // room's chat history.
+  // MCP-local convergence reminder on every Nth turn (N = CONVERGE_TURNS) —
+  // i.e. it fires at turn 12, 24, 36, …, not every turn past 12. The notice
+  // is generated here, by the MCP server — it never enters the room's chat
+  // history.
   private buildSendResult(transport: 'p2p' | 'relay', id: string, timestamp: number): SendOk {
     this.sentCount++
     const result: SendOk = {
-      ok: true, transport, messageId: id, timestamp,
-      turnCount: this.sentCount, convergeAt: CONVERGE_TURNS,
+      ok: true,
+      transport,
+      messageId: id,
+      timestamp,
+      turnCount: this.sentCount,
+      convergeAt: CONVERGE_TURNS,
     }
-    if (this.sentCount >= CONVERGE_TURNS) {
+    if (this.sentCount > 0 && this.sentCount % CONVERGE_TURNS === 0) {
       result.convergeNotice =
         `[MCP system notice] You have now spoken ${this.sentCount} turns ` +
-        `(convergence threshold ${CONVERGE_TURNS}). Start converging the discussion: ` +
+        `(reminder fires every ${CONVERGE_TURNS}). Start converging the discussion: ` +
         `focus on the core conclusion, stop restating, and — if you are the chairperson — ` +
         `move to summarise and declare CONSENSUS as soon as possible.`
     }
@@ -886,21 +1002,22 @@ export class RoomClient {
     if (this.roomTurnLimit > 0 && this.sentCount >= this.roomTurnLimit) {
       return {
         ok: false,
-        error: `room_turn_limit_reached: this AI has spoken ${this.sentCount}/${this.roomTurnLimit} ` +
-               `turns in this room (hard cap set by the chair). Stop sending and call leave_room.`,
+        error:
+          `room_turn_limit_reached: this AI has spoken ${this.sentCount}/${this.roomTurnLimit} ` +
+          `turns in this room (hard cap set by the chair). Stop sending and call leave_room.`,
       }
     }
 
     const html = buildContent(content, mentions, this.session.members)
     const msg = {
-      id:        nanoid(),
-      type:      'chat',
-      from:      this.session.nickname,
-      fromId:    this.session.clientId,
-      content:   html,
+      id: nanoid(),
+      type: 'chat',
+      from: this.session.nickname,
+      fromId: this.session.clientId,
+      content: html,
       timestamp: Date.now(),
-      roomKey:   this.session.roomKey,
-      isBot:     true,
+      roomKey: this.session.roomKey,
+      isBot: true,
     }
     const raw = JSON.stringify(msg)
 
@@ -908,7 +1025,9 @@ export class RoomClient {
       try {
         this.channel.send(raw)
         return this.buildSendResult('p2p', msg.id, msg.timestamp)
-      } catch { /* fall through to relay */ }
+      } catch {
+        /* fall through to relay */
+      }
     }
 
     if (this.ws?.readyState === WebSocket.OPEN && this.centerId) {
@@ -939,11 +1058,7 @@ export class RoomClient {
    * Matcher = (mentions me) OR (isSystem && includeSystem).
    * `since` lets callers avoid getting the same backlog twice.
    */
-  waitForMention(
-    timeoutMs: number,
-    since: number | undefined,
-    includeSystem: boolean,
-  ): Promise<IncomingMessage[]> {
+  waitForMention(timeoutMs: number, since: number | undefined, includeSystem: boolean): Promise<IncomingMessage[]> {
     const matcher = (m: IncomingMessage) => {
       if (since !== undefined && m.timestamp <= since) return false
       if (m.mentionedMe) return true
@@ -964,7 +1079,9 @@ export class RoomClient {
     })
   }
 
-  onMessage(fn: MessageListener) { this.listeners.push(fn) }
+  onMessage(fn: MessageListener) {
+    this.listeners.push(fn)
+  }
 
   leave() {
     this.terminate('disconnected')

@@ -7,3 +7,5 @@ TESTCASES.md
 TEST_REPORT.md
 # Materialised by predev/prebuild scripts — canonical source is shared/
 */src/_shared/
+# npm pack output — release artifacts ship via GitHub Releases, not git
+*.tgz

@@ -19,9 +19,7 @@ const emit = defineEmits<{
 const selected = ref<Set<string>>(new Set())
 const note = ref('')
 
-const allSelected = computed(() =>
-  props.messages.length > 0 && selected.value.size === props.messages.length
-)
+const allSelected = computed(() => props.messages.length > 0 && selected.value.size === props.messages.length)
 
 function toggleAll() {
   if (allSelected.value) {
@@ -52,8 +50,7 @@ function confirm() {
         hide-details
         density="compact"
         :label="t('forward.select_all')"
-        @update:model-value="toggleAll"
-      />
+        @update:model-value="toggleAll" />
       <span class="count">{{ t('forward.count_selected', { count: selected.size }) }}</span>
       <v-spacer />
       <v-text-field
@@ -62,8 +59,7 @@ function confirm() {
         density="compact"
         variant="outlined"
         hide-details
-        style="max-width: 260px"
-      />
+        style="max-width: 260px" />
       <v-btn icon="mdi-check" color="primary" size="small" :disabled="selected.size === 0" @click="confirm" />
       <v-btn icon="mdi-close" size="small" variant="text" @click="emit('cancel')" />
     </div>
@@ -77,8 +73,7 @@ function confirm() {
         :client-id="clientId"
         :select-mode="true"
         :selected="selected.has(m.id)"
-        @toggle="toggleOne"
-      />
+        @toggle="toggleOne" />
     </div>
   </div>
 </template>

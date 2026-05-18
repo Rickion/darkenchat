@@ -7,7 +7,7 @@ const NICK_SESSION_KEY = 'dc_pending_nick'
 export const useRoomStore = defineStore('room', () => {
   // Persisted to sessionStorage so it survives page refresh
   const pendingNickname = ref(sessionStorage.getItem(NICK_SESSION_KEY) ?? '')
-  watch(pendingNickname, (v) => {
+  watch(pendingNickname, v => {
     if (v) sessionStorage.setItem(NICK_SESSION_KEY, v)
     else sessionStorage.removeItem(NICK_SESSION_KEY)
   })
@@ -90,9 +90,26 @@ export const useRoomStore = defineStore('room', () => {
 
   return {
     pendingNickname,
-    key, clientId, nickname, centerId, chairId,
-    nicknameSet, members, connected, reconnecting, aiTurnLimit,
-    isChair, isCenter, chairMember, usedNicknames,
-    setRoom, addMember, removeMember, updateCenter, updateChair, updateMemberConn, reset,
+    key,
+    clientId,
+    nickname,
+    centerId,
+    chairId,
+    nicknameSet,
+    members,
+    connected,
+    reconnecting,
+    aiTurnLimit,
+    isChair,
+    isCenter,
+    chairMember,
+    usedNicknames,
+    setRoom,
+    addMember,
+    removeMember,
+    updateCenter,
+    updateChair,
+    updateMemberConn,
+    reset,
   }
 })

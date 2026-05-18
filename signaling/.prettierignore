@@ -1,0 +1,4 @@
+dist
+node_modules
+src/_shared
+package-lock.json

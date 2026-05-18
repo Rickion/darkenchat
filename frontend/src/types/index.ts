@@ -1,10 +1,19 @@
 // Wire-level protocol types live in shared/ so the signaling server uses the
 // same definitions. Anything below is browser-only.
 export type { C2S, S2C, MemberInfo, RTCSignal } from '@/_shared/protocol'
+export { PROTOCOL_VERSION } from '@/_shared/protocol'
 
 export type MessageType =
-  | 'chat' | 'system' | 'forward' | 'file' | 'heartbeat' | 'ack'
-  | 'poll' | 'canvas' | 'survey' | 'voice'
+  | 'chat'
+  | 'system'
+  | 'forward'
+  | 'file'
+  | 'heartbeat'
+  | 'ack'
+  | 'poll'
+  | 'canvas'
+  | 'survey'
+  | 'voice'
 
 export interface FileMeta {
   fileId: string

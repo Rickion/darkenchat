@@ -6,9 +6,7 @@ import type { RTCSignal } from '@/types'
 // Audio is ~32-64 kbps Opus so 4 outbound streams is trivial bandwidth-wise.
 export const MAX_VOICE_PARTICIPANTS = 5
 
-export type VoiceEvent =
-  | { event: 'mic_denied' }
-  | { event: 'voice_full' }
+export type VoiceEvent = { event: 'mic_denied' } | { event: 'voice_full' }
 
 export interface VoiceHooks {
   // Someone (including self) joined the call. Caller updates the bubble.
@@ -18,15 +16,15 @@ export interface VoiceHooks {
 }
 
 export function useVoice(
-  getIceServers:        () => RTCIceServer[],
-  sendVoiceSignal:      (to: string, payload: RTCSignal) => void,
-  broadcastControl:     (payload: object) => void,
-  sendDirectedControl:  (to: string, payload: object) => void,
-  onEvent:              (e: VoiceEvent) => void,
-  hooks:                VoiceHooks,
+  getIceServers: () => RTCIceServer[],
+  sendVoiceSignal: (to: string, payload: RTCSignal) => void,
+  broadcastControl: (payload: object) => void,
+  sendDirectedControl: (to: string, payload: object) => void,
+  onEvent: (e: VoiceEvent) => void,
+  hooks: VoiceHooks,
 ) {
   const voiceStore = useVoiceStore()
-  const roomStore  = useRoomStore()
+  const roomStore = useRoomStore()
 
   let localStream: MediaStream | null = null
 
@@ -87,7 +85,11 @@ export function useVoice(
   function closePeer(peerId: string) {
     const entry = peers.get(peerId)
     if (entry) {
-      try { entry.pc.close() } catch { /* already closed */ }
+      try {
+        entry.pc.close()
+      } catch {
+        /* already closed */
+      }
       peers.delete(peerId)
     }
     voiceStore.remoteStreams.delete(peerId)
@@ -177,7 +179,12 @@ export function useVoice(
         }
         // If I'm already in voice, tell the new joiner I'm here so they dial me.
         if (voiceStore.inVoice) {
-          sendDirectedControl(from, { type: 'voice_announce', from: roomStore.clientId, to: from, sessionId: voiceStore.activeSessionId })
+          sendDirectedControl(from, {
+            type: 'voice_announce',
+            from: roomStore.clientId,
+            to: from,
+            sessionId: voiceStore.activeSessionId,
+          })
         }
         break
       }
@@ -215,9 +222,7 @@ export function useVoice(
       if (payload.sdp) {
         // Perfect-negotiation pattern: lexicographically-smaller clientId is polite.
         const polite = roomStore.clientId < fromId
-        const offerCollision =
-          payload.sdp.type === 'offer' &&
-          (entry.makingOffer || pc.signalingState !== 'stable')
+        const offerCollision = payload.sdp.type === 'offer' && (entry.makingOffer || pc.signalingState !== 'stable')
         const ignoreOffer = !polite && offerCollision
         if (ignoreOffer) return
 
@@ -230,7 +235,11 @@ export function useVoice(
         }
       }
       if (payload.candidate) {
-        try { await pc.addIceCandidate(payload.candidate) } catch { /* stale */ }
+        try {
+          await pc.addIceCandidate(payload.candidate)
+        } catch {
+          /* stale */
+        }
       }
     } catch (e) {
       console.warn('[voice] signal error:', e)
@@ -258,7 +267,12 @@ export function useVoice(
   // can render the mic indicator (and so they can dial me if they later join voice).
   function onMemberJoinedRoom(clientId: string) {
     if (clientId !== roomStore.clientId && voiceStore.inVoice) {
-      sendDirectedControl(clientId, { type: 'voice_announce', from: roomStore.clientId, to: clientId, sessionId: voiceStore.activeSessionId })
+      sendDirectedControl(clientId, {
+        type: 'voice_announce',
+        from: roomStore.clientId,
+        to: clientId,
+        sessionId: voiceStore.activeSessionId,
+      })
     }
   }
 
@@ -268,9 +282,14 @@ export function useVoice(
   }
 
   return {
-    prepareMic, joinVoice, leaveVoice, toggleMute,
-    handleVoiceControl, handleVoiceSignal,
-    onMemberLeftRoom, onMemberJoinedRoom,
+    prepareMic,
+    joinVoice,
+    leaveVoice,
+    toggleMute,
+    handleVoiceControl,
+    handleVoiceSignal,
+    onMemberLeftRoom,
+    onMemberJoinedRoom,
     dispose,
   }
 }

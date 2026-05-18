@@ -16,6 +16,14 @@ const creating = ref(false)
 const seriesKey = getRandomSeriesKey()
 const leftHovered = ref(false)
 const rightHovered = ref(false)
+
+// Hover helpers — extracted so the multi-statement template expressions
+// survive Prettier (Vue's template parser does NOT do ASI between
+// statements, and Prettier strips the explicit `;` when it wraps).
+function hoverSide(side: 'left' | 'right' | null) {
+  leftHovered.value = side === 'left'
+  rightHovered.value = side === 'right'
+}
 const nickname = ref('')
 
 onMounted(() => {
@@ -47,7 +55,10 @@ async function createRoom() {
 
 function enterRoom() {
   const key = joinKey.value.trim().toUpperCase()
-  if (key.length === 0) { joinError.value = t('home.key_required'); return }
+  if (key.length === 0) {
+    joinError.value = t('home.key_required')
+    return
+  }
   const nick = nickname.value.trim() || getRandomNickname(seriesKey)
   roomStore.pendingNickname = nick
   joinError.value = ''
@@ -66,10 +77,9 @@ function enterRoom() {
     <div
       class="side left-side"
       :class="{ hovered: leftHovered }"
-      @mouseenter="leftHovered = true; rightHovered = false"
-      @mouseleave="leftHovered = false"
-      @click="createRoom"
-    >
+      @mouseenter="hoverSide('left')"
+      @mouseleave="hoverSide(null)"
+      @click="createRoom">
       <div class="side-content">
         <div class="icon-circle"><v-icon size="28" color="#1A1A1A">mdi-plus</v-icon></div>
         <span class="side-text">{{ t('home.create_as', { nick: nickname || '…' }) }}</span>
@@ -90,8 +100,7 @@ function enterRoom() {
         density="compact"
         hide-details
         class="nick-input"
-        @update:model-value="onNicknameInput"
-      />
+        @update:model-value="onNicknameInput" />
       <v-btn icon="mdi-dice-multiple" variant="text" size="x-small" :title="t('home.randomize')" @click="randomize" />
     </div>
 
@@ -99,10 +108,9 @@ function enterRoom() {
     <div
       class="side right-side"
       :class="{ hovered: rightHovered }"
-      @mouseenter="rightHovered = true; leftHovered = false"
-      @mouseleave="rightHovered = false"
-      @click="enterRoom"
-    >
+      @mouseenter="hoverSide('right')"
+      @mouseleave="hoverSide(null)"
+      @click="enterRoom">
       <div class="side-content right-content">
         <span class="side-text">{{ t('home.join') }}</span>
         <v-text-field
@@ -114,8 +122,7 @@ function enterRoom() {
           hide-details
           @input="joinKey = joinKey.toUpperCase()"
           @keyup.enter.stop="enterRoom"
-          @click.stop
-        />
+          @click.stop />
         <span class="side-text">as {{ nickname || '…' }}</span>
         <div class="icon-circle right-icon"><v-icon size="28" color="#1A1A1A">mdi-arrow-right</v-icon></div>
       </div>
@@ -126,7 +133,8 @@ function enterRoom() {
 
     <!-- Bottom bar -->
     <footer class="privacy-bar">
-      <v-icon size="13" style="vertical-align:middle;margin-right:4px">mdi-lock</v-icon>{{ t('app.privacy') }}
+      <v-icon size="13" style="vertical-align: middle; margin-right: 4px">mdi-lock</v-icon>
+      {{ t('app.privacy') }}
     </footer>
   </div>
 </template>
@@ -192,17 +200,12 @@ function enterRoom() {
   left: 0;
   width: 100vw;
   padding-right: 50vw;
-  background: linear-gradient(135deg, rgba(26,26,26,0.3) 0%, rgba(26,26,26,0.1) 100%);
-  clip-path: polygon(
-    0 0,
-    calc(50vw + 28.87vh) 0,
-    calc(50vw - 28.87vh) 100%,
-    0 100%
-  );
+  background: linear-gradient(135deg, rgba(26, 26, 26, 0.3) 0%, rgba(26, 26, 26, 0.1) 100%);
+  clip-path: polygon(0 0, calc(50vw + 28.87vh) 0, calc(50vw - 28.87vh) 100%, 0 100%);
 }
 
 .left-side::before {
-  background: linear-gradient(135deg, rgba(201,168,76,0.18) 0%, rgba(201,168,76,0.06) 100%);
+  background: linear-gradient(135deg, rgba(201, 168, 76, 0.18) 0%, rgba(201, 168, 76, 0.06) 100%);
 }
 
 .left-side.hovered {
@@ -214,17 +217,12 @@ function enterRoom() {
   right: auto;
   width: 100vw;
   padding-left: 50vw;
-  background: linear-gradient(225deg, rgba(26,26,26,0.3) 0%, rgba(26,26,26,0.1) 100%);
-  clip-path: polygon(
-    calc(50vw + 28.87vh) 0,
-    100vw 0,
-    100vw 100%,
-    calc(50vw - 28.87vh) 100%
-  );
+  background: linear-gradient(225deg, rgba(26, 26, 26, 0.3) 0%, rgba(26, 26, 26, 0.1) 100%);
+  clip-path: polygon(calc(50vw + 28.87vh) 0, 100vw 0, 100vw 100%, calc(50vw - 28.87vh) 100%);
 }
 
 .right-side::before {
-  background: linear-gradient(225deg, rgba(91,141,184,0.18) 0%, rgba(91,141,184,0.06) 100%);
+  background: linear-gradient(225deg, rgba(91, 141, 184, 0.18) 0%, rgba(91, 141, 184, 0.06) 100%);
 }
 
 .right-side.hovered {
@@ -240,24 +238,26 @@ function enterRoom() {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #1A1A1A;
-  box-shadow: 0 2px 10px rgba(201,168,76,0.3);
-  transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
+  color: #1a1a1a;
+  box-shadow: 0 2px 10px rgba(201, 168, 76, 0.3);
+  transition:
+    transform 0.15s ease-out,
+    box-shadow 0.15s ease-out;
   flex-shrink: 0;
 }
 
 .side.hovered .icon-circle {
   transform: scale(1.12);
-  box-shadow: 0 2px 14px rgba(201,168,76,0.45);
+  box-shadow: 0 2px 14px rgba(201, 168, 76, 0.45);
 }
 
 .right-icon {
   background: var(--dc-blue);
-  box-shadow: 0 2px 10px rgba(91,141,184,0.3);
+  box-shadow: 0 2px 10px rgba(91, 141, 184, 0.3);
 }
 
 .right-side.hovered .right-icon {
-  box-shadow: 0 2px 14px rgba(91,141,184,0.45);
+  box-shadow: 0 2px 14px rgba(91, 141, 184, 0.45);
 }
 
 /* Side content */
@@ -269,7 +269,9 @@ function enterRoom() {
   gap: 20px;
   padding: 40px;
   opacity: 0.4;
-  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+  transition:
+    opacity 0.15s ease-out,
+    transform 0.15s ease-out;
 }
 
 /* Offset content toward the center of each diagonal triangle */
@@ -336,7 +338,10 @@ function enterRoom() {
     transparent 100%
   );
   opacity: 0.3;
-  transition: opacity 0.15s ease-out, box-shadow 0.15s ease-out, background 0.15s ease-out;
+  transition:
+    opacity 0.15s ease-out,
+    box-shadow 0.15s ease-out,
+    background 0.15s ease-out;
   border-radius: 2px;
   position: absolute;
   left: 50%;
@@ -348,26 +353,26 @@ function enterRoom() {
   background: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(201,168,76,0.3) 20%,
+    rgba(201, 168, 76, 0.3) 20%,
     var(--dc-gold) 50%,
-    rgba(201,168,76,0.3) 80%,
+    rgba(201, 168, 76, 0.3) 80%,
     transparent 100%
   );
   opacity: 0.9;
-  box-shadow: 0 0 25px rgba(201,168,76,0.5);
+  box-shadow: 0 0 25px rgba(201, 168, 76, 0.5);
 }
 
 .divider-line.right-active {
   background: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(91,141,184,0.3) 20%,
+    rgba(91, 141, 184, 0.3) 20%,
     var(--dc-blue) 50%,
-    rgba(91,141,184,0.3) 80%,
+    rgba(91, 141, 184, 0.3) 80%,
     transparent 100%
   );
   opacity: 0.9;
-  box-shadow: 0 0 25px rgba(91,141,184,0.5);
+  box-shadow: 0 0 25px rgba(91, 141, 184, 0.5);
 }
 
 .nickname-float {
@@ -382,16 +387,18 @@ function enterRoom() {
   background: var(--dc-panel);
   padding: 8px 16px;
   border-radius: 24px;
-  border: 1px solid rgba(201,168,76,0.2);
-  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-  transition: border-color 0.15s ease-out, box-shadow 0.15s ease-out;
+  border: 1px solid rgba(201, 168, 76, 0.2);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  transition:
+    border-color 0.15s ease-out,
+    box-shadow 0.15s ease-out;
   pointer-events: auto;
   white-space: nowrap;
 }
 
 .nickname-float:hover {
-  border-color: rgba(201,168,76,0.5);
-  box-shadow: 0 4px 30px rgba(201,168,76,0.25);
+  border-color: rgba(201, 168, 76, 0.5);
+  box-shadow: 0 4px 30px rgba(201, 168, 76, 0.25);
 }
 
 .nick-input {
@@ -417,7 +424,7 @@ function enterRoom() {
   font-size: 0.7rem;
   color: var(--dc-gray);
   padding: 8px 16px;
-  background: rgba(26,26,26,0.95);
+  background: rgba(26, 26, 26, 0.95);
   border-top: 1px solid #2a2a2a;
   letter-spacing: 0.02em;
   z-index: 100;
@@ -439,17 +446,12 @@ function enterRoom() {
     height: 100vh;
     padding-right: 0;
     padding-bottom: 50vh;
-    background: linear-gradient(180deg, rgba(26,26,26,0.3) 0%, rgba(26,26,26,0.1) 100%);
-    clip-path: polygon(
-      0 0,
-      100vw 0,
-      100vw calc(50vh - 28.87vw),
-      0 calc(50vh + 28.87vw)
-    );
+    background: linear-gradient(180deg, rgba(26, 26, 26, 0.3) 0%, rgba(26, 26, 26, 0.1) 100%);
+    clip-path: polygon(0 0, 100vw 0, 100vw calc(50vh - 28.87vw), 0 calc(50vh + 28.87vw));
   }
 
   .left-side::before {
-    background: linear-gradient(180deg, rgba(201,168,76,0.18) 0%, rgba(201,168,76,0.06) 100%);
+    background: linear-gradient(180deg, rgba(201, 168, 76, 0.18) 0%, rgba(201, 168, 76, 0.06) 100%);
   }
 
   .right-side {
@@ -459,17 +461,12 @@ function enterRoom() {
     height: 100vh;
     padding-left: 0;
     padding-top: 50vh;
-    background: linear-gradient(0deg, rgba(26,26,26,0.3) 0%, rgba(26,26,26,0.1) 100%);
-    clip-path: polygon(
-      0 calc(50vh + 28.87vw),
-      100vw calc(50vh - 28.87vw),
-      100vw 100vh,
-      0 100vh
-    );
+    background: linear-gradient(0deg, rgba(26, 26, 26, 0.3) 0%, rgba(26, 26, 26, 0.1) 100%);
+    clip-path: polygon(0 calc(50vh + 28.87vw), 100vw calc(50vh - 28.87vw), 100vw 100vh, 0 100vh);
   }
 
   .right-side::before {
-    background: linear-gradient(0deg, rgba(91,141,184,0.18) 0%, rgba(91,141,184,0.06) 100%);
+    background: linear-gradient(0deg, rgba(91, 141, 184, 0.18) 0%, rgba(91, 141, 184, 0.06) 100%);
   }
 
   .divider-wrapper {
@@ -486,9 +483,9 @@ function enterRoom() {
     background: linear-gradient(
       to bottom,
       transparent 0%,
-      rgba(201,168,76,0.4) 30%,
+      rgba(201, 168, 76, 0.4) 30%,
       var(--dc-gold) 50%,
-      rgba(91,141,184,0.4) 70%,
+      rgba(91, 141, 184, 0.4) 70%,
       transparent 100%
     );
     transform: translate(-50%, -50%) rotate(60deg);

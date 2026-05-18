@@ -25,7 +25,7 @@ export function getOrCreateRoom(key: string): Room {
       banned: false,
       nicknameSet: SERIES_KEYS[Math.floor(Math.random() * SERIES_KEYS.length)],
       recentLeft: new Map(),
-      aiTurnLimit: 0,    // 0 → unlimited until the chair sets one
+      aiTurnLimit: 0, // 0 → unlimited until the chair sets one
     }
     rooms.set(key, room)
   }
@@ -54,9 +54,7 @@ export function removeMember(room: Room, clientId: string): Member | undefined {
 
   // Chair migration: next earliest non-bot member
   if (room.chairId === clientId) {
-    const nextChair = [...room.members.values()]
-      .filter(m => !m.isBot)
-      .sort((a, b) => a.joinedAt - b.joinedAt)[0]
+    const nextChair = [...room.members.values()].filter(m => !m.isBot).sort((a, b) => a.joinedAt - b.joinedAt)[0]
     if (nextChair) room.chairId = nextChair.clientId
   }
 
@@ -67,13 +65,21 @@ export function broadcast(room: Room, payload: S2C, exceptId?: string): void {
   const data = JSON.stringify(payload)
   for (const member of room.members.values()) {
     if (member.clientId !== exceptId) {
-      try { member.ws.send(data) } catch { /* closed */ }
+      try {
+        member.ws.send(data)
+      } catch {
+        /* closed */
+      }
     }
   }
 }
 
 export function send(member: Member, payload: S2C): void {
-  try { member.ws.send(JSON.stringify(payload)) } catch { /* closed */ }
+  try {
+    member.ws.send(JSON.stringify(payload))
+  } catch {
+    /* closed */
+  }
 }
 
 export function memberInfo(m: Member): MemberInfo {

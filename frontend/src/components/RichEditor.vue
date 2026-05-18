@@ -38,8 +38,16 @@ const Mention = Node.create({
   selectable: true,
   addAttributes() {
     return {
-      mentionId: { default: null, parseHTML: (el: HTMLElement) => el.getAttribute('data-mention-id'), renderHTML: (a: Record<string, unknown>) => ({ 'data-mention-id': a.mentionId }) },
-      label:     { default: '',   parseHTML: (el: HTMLElement) => el.getAttribute('data-label') ?? el.textContent?.replace(/^@/, '') ?? '', renderHTML: (a: Record<string, unknown>) => ({ 'data-label': a.label }) },
+      mentionId: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-mention-id'),
+        renderHTML: (a: Record<string, unknown>) => ({ 'data-mention-id': a.mentionId }),
+      },
+      label: {
+        default: '',
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-label') ?? el.textContent?.replace(/^@/, '') ?? '',
+        renderHTML: (a: Record<string, unknown>) => ({ 'data-label': a.label }),
+      },
     }
   },
   parseHTML() {
@@ -51,14 +59,13 @@ const Mention = Node.create({
 })
 
 // ─── Mention picker state ────────────────────────────────
-const mentionOpen   = ref(false)
-const mentionQuery  = ref('')
-const mentionFrom   = ref(-1)  // doc-position of the @ character
-const mentionIndex  = ref(0)
+const mentionOpen = ref(false)
+const mentionQuery = ref('')
+const mentionFrom = ref(-1) // doc-position of the @ character
+const mentionIndex = ref(0)
 const mentionCoords = ref({ top: 0, left: 0 })
-const editorWrap    = ref<HTMLElement | null>(null)
+const editorWrap = ref<HTMLElement | null>(null)
 const mentionMenuEl = ref<HTMLElement | null>(null)
-
 
 const mentionCandidates = computed<MemberInfo[]>(() => {
   const allOption: MemberInfo = { clientId: MENTION_ALL_ID, nickname: t('room.mention_all'), joinedAt: 0 }
@@ -90,13 +97,19 @@ function detectMention() {
   if (!ed) return
   const state = ed.state
   const sel = state.selection
-  if (!sel.empty) { closeMention(); return }
+  if (!sel.empty) {
+    closeMention()
+    return
+  }
   const $pos = sel.$from
   const textBefore = $pos.parent.textBetween(0, $pos.parentOffset, '\n', '￼')
   // Trigger on `@` typed at ANY position — start of line, after whitespace, or
   // mid-word. The query is the run of non-whitespace chars up to the cursor.
   const m = textBefore.match(/@([^\s@]{0,24})$/)
-  if (!m) { closeMention(); return }
+  if (!m) {
+    closeMention()
+    return
+  }
 
   mentionQuery.value = m[1]
   mentionFrom.value = sel.from - m[1].length - 1
@@ -114,16 +127,19 @@ function positionMentionMenu() {
   const wrapRect = editorWrap.value?.getBoundingClientRect()
   if (!wrapRect) return
   let coords: { top: number; bottom: number; left: number; right: number }
-  try { coords = ed.view.coordsAtPos(mentionFrom.value) }
-  catch { return }
+  try {
+    coords = ed.view.coordsAtPos(mentionFrom.value)
+  } catch {
+    return
+  }
 
   const margin = 8
   const menuEl = mentionMenuEl.value
-  const popupWidth  = menuEl?.offsetWidth  ?? 200
+  const popupWidth = menuEl?.offsetWidth ?? 200
   const popupHeight = menuEl?.offsetHeight ?? 230
 
   // Preferred placement: just below the @, left-aligned with it.
-  let topV  = coords.bottom + 4
+  let topV = coords.bottom + 4
   let leftV = coords.left
 
   // Clamp horizontally inside the viewport.
@@ -140,7 +156,7 @@ function positionMentionMenu() {
   if (topV < margin) topV = margin
 
   mentionCoords.value = {
-    top:  topV  - wrapRect.top,
+    top: topV - wrapRect.top,
     left: leftV - wrapRect.left,
   }
 }
@@ -149,7 +165,8 @@ function acceptMention(member: MemberInfo) {
   const ed = editor.value
   if (!ed || mentionFrom.value < 0) return
   const to = ed.state.selection.from
-  ed.chain().focus()
+  ed.chain()
+    .focus()
     .deleteRange({ from: mentionFrom.value, to })
     .insertContent([
       { type: 'mention', attrs: { mentionId: member.clientId, label: member.nickname } },
@@ -182,7 +199,8 @@ const editor = useEditor({
         }
         if (event.key === 'ArrowUp') {
           event.preventDefault()
-          mentionIndex.value = (mentionIndex.value - 1 + mentionCandidates.value.length) % mentionCandidates.value.length
+          mentionIndex.value =
+            (mentionIndex.value - 1 + mentionCandidates.value.length) % mentionCandidates.value.length
           return true
         }
         if (event.key === 'Enter' || event.key === 'Tab') {
@@ -211,8 +229,12 @@ const editor = useEditor({
         const file = imgItem.getAsFile()
         if (file && file.size <= 2 * 1024 * 1024) {
           const reader = new FileReader()
-          reader.onload = (e) => {
-            editor.value?.chain().focus().setImage({ src: e.target?.result as string }).run()
+          reader.onload = e => {
+            editor.value
+              ?.chain()
+              .focus()
+              .setImage({ src: e.target?.result as string })
+              .run()
           }
           reader.readAsDataURL(file)
           return true
@@ -238,15 +260,33 @@ function submit() {
   closeMention()
 }
 
-function toggleBold()         { editor.value?.chain().focus().toggleBold().run() }
-function toggleItalic()       { editor.value?.chain().focus().toggleItalic().run() }
-function toggleUnderline()    { editor.value?.chain().focus().toggleUnderline().run() }
-function toggleStrike()       { editor.value?.chain().focus().toggleStrike().run() }
-function toggleCode()         { editor.value?.chain().focus().toggleCode().run() }
-function toggleCodeBlock()    { editor.value?.chain().focus().toggleCodeBlock().run() }
-function toggleBulletList()   { editor.value?.chain().focus().toggleBulletList().run() }
-function toggleOrderedList()  { editor.value?.chain().focus().toggleOrderedList().run() }
-function toggleBlockquote()   { editor.value?.chain().focus().toggleBlockquote().run() }
+function toggleBold() {
+  editor.value?.chain().focus().toggleBold().run()
+}
+function toggleItalic() {
+  editor.value?.chain().focus().toggleItalic().run()
+}
+function toggleUnderline() {
+  editor.value?.chain().focus().toggleUnderline().run()
+}
+function toggleStrike() {
+  editor.value?.chain().focus().toggleStrike().run()
+}
+function toggleCode() {
+  editor.value?.chain().focus().toggleCode().run()
+}
+function toggleCodeBlock() {
+  editor.value?.chain().focus().toggleCodeBlock().run()
+}
+function toggleBulletList() {
+  editor.value?.chain().focus().toggleBulletList().run()
+}
+function toggleOrderedList() {
+  editor.value?.chain().focus().toggleOrderedList().run()
+}
+function toggleBlockquote() {
+  editor.value?.chain().focus().toggleBlockquote().run()
+}
 function setLink() {
   const url = window.prompt(t('room.input_url_prompt'))
   if (url) editor.value?.chain().focus().setLink({ href: url }).run()
@@ -296,18 +336,61 @@ onUnmounted(() => {
 
       <!-- Expanded toolbar -->
       <div v-if="!toolbarCollapsed" class="toolbar">
-        <v-btn icon size="x-small" variant="text" :color="isActive('bold') ? 'primary' : ''" @click="toggleBold"><b>B</b></v-btn>
-        <v-btn icon size="x-small" variant="text" :color="isActive('italic') ? 'primary' : ''" @click="toggleItalic"><i>I</i></v-btn>
-        <v-btn icon size="x-small" variant="text" :color="isActive('underline') ? 'primary' : ''" @click="toggleUnderline"><u>U</u></v-btn>
-        <v-btn icon size="x-small" variant="text" :color="isActive('strike') ? 'primary' : ''" @click="toggleStrike"><s>S</s></v-btn>
+        <v-btn icon size="x-small" variant="text" :color="isActive('bold') ? 'primary' : ''" @click="toggleBold">
+          <b>B</b>
+        </v-btn>
+        <v-btn icon size="x-small" variant="text" :color="isActive('italic') ? 'primary' : ''" @click="toggleItalic">
+          <i>I</i>
+        </v-btn>
+        <v-btn
+          icon
+          size="x-small"
+          variant="text"
+          :color="isActive('underline') ? 'primary' : ''"
+          @click="toggleUnderline">
+          <u>U</u>
+        </v-btn>
+        <v-btn icon size="x-small" variant="text" :color="isActive('strike') ? 'primary' : ''" @click="toggleStrike">
+          <s>S</s>
+        </v-btn>
         <div class="sep" />
-        <v-btn icon="mdi-code-tags" size="x-small" variant="text" :color="isActive('code') ? 'primary' : ''" @click="toggleCode" />
-        <v-btn icon="mdi-code-braces" size="x-small" variant="text" :color="isActive('codeBlock') ? 'primary' : ''" @click="toggleCodeBlock" />
+        <v-btn
+          icon="mdi-code-tags"
+          size="x-small"
+          variant="text"
+          :color="isActive('code') ? 'primary' : ''"
+          @click="toggleCode" />
+        <v-btn
+          icon="mdi-code-braces"
+          size="x-small"
+          variant="text"
+          :color="isActive('codeBlock') ? 'primary' : ''"
+          @click="toggleCodeBlock" />
         <div class="sep" />
-        <v-btn icon="mdi-link" size="x-small" variant="text" :color="isActive('link') ? 'primary' : ''" @click="setLink" />
-        <v-btn icon="mdi-format-list-bulleted" size="x-small" variant="text" :color="isActive('bulletList') ? 'primary' : ''" @click="toggleBulletList" />
-        <v-btn icon="mdi-format-list-numbered" size="x-small" variant="text" :color="isActive('orderedList') ? 'primary' : ''" @click="toggleOrderedList" />
-        <v-btn icon="mdi-format-quote-close" size="x-small" variant="text" :color="isActive('blockquote') ? 'primary' : ''" @click="toggleBlockquote" />
+        <v-btn
+          icon="mdi-link"
+          size="x-small"
+          variant="text"
+          :color="isActive('link') ? 'primary' : ''"
+          @click="setLink" />
+        <v-btn
+          icon="mdi-format-list-bulleted"
+          size="x-small"
+          variant="text"
+          :color="isActive('bulletList') ? 'primary' : ''"
+          @click="toggleBulletList" />
+        <v-btn
+          icon="mdi-format-list-numbered"
+          size="x-small"
+          variant="text"
+          :color="isActive('orderedList') ? 'primary' : ''"
+          @click="toggleOrderedList" />
+        <v-btn
+          icon="mdi-format-quote-close"
+          size="x-small"
+          variant="text"
+          :color="isActive('blockquote') ? 'primary' : ''"
+          @click="toggleBlockquote" />
       </div>
 
       <!-- Collapsed: overflow "…" menu -->
@@ -316,18 +399,61 @@ onUnmounted(() => {
           <v-btn icon="mdi-dots-horizontal" size="x-small" variant="text" class="overflow-btn" v-bind="ap" />
         </template>
         <div class="toolbar overflow-menu">
-          <v-btn icon size="x-small" variant="text" :color="isActive('bold') ? 'primary' : ''" @click="toggleBold"><b>B</b></v-btn>
-          <v-btn icon size="x-small" variant="text" :color="isActive('italic') ? 'primary' : ''" @click="toggleItalic"><i>I</i></v-btn>
-          <v-btn icon size="x-small" variant="text" :color="isActive('underline') ? 'primary' : ''" @click="toggleUnderline"><u>U</u></v-btn>
-          <v-btn icon size="x-small" variant="text" :color="isActive('strike') ? 'primary' : ''" @click="toggleStrike"><s>S</s></v-btn>
+          <v-btn icon size="x-small" variant="text" :color="isActive('bold') ? 'primary' : ''" @click="toggleBold">
+            <b>B</b>
+          </v-btn>
+          <v-btn icon size="x-small" variant="text" :color="isActive('italic') ? 'primary' : ''" @click="toggleItalic">
+            <i>I</i>
+          </v-btn>
+          <v-btn
+            icon
+            size="x-small"
+            variant="text"
+            :color="isActive('underline') ? 'primary' : ''"
+            @click="toggleUnderline">
+            <u>U</u>
+          </v-btn>
+          <v-btn icon size="x-small" variant="text" :color="isActive('strike') ? 'primary' : ''" @click="toggleStrike">
+            <s>S</s>
+          </v-btn>
           <div class="sep" />
-          <v-btn icon="mdi-code-tags" size="x-small" variant="text" :color="isActive('code') ? 'primary' : ''" @click="toggleCode" />
-          <v-btn icon="mdi-code-braces" size="x-small" variant="text" :color="isActive('codeBlock') ? 'primary' : ''" @click="toggleCodeBlock" />
+          <v-btn
+            icon="mdi-code-tags"
+            size="x-small"
+            variant="text"
+            :color="isActive('code') ? 'primary' : ''"
+            @click="toggleCode" />
+          <v-btn
+            icon="mdi-code-braces"
+            size="x-small"
+            variant="text"
+            :color="isActive('codeBlock') ? 'primary' : ''"
+            @click="toggleCodeBlock" />
           <div class="sep" />
-          <v-btn icon="mdi-link" size="x-small" variant="text" :color="isActive('link') ? 'primary' : ''" @click="setLink" />
-          <v-btn icon="mdi-format-list-bulleted" size="x-small" variant="text" :color="isActive('bulletList') ? 'primary' : ''" @click="toggleBulletList" />
-          <v-btn icon="mdi-format-list-numbered" size="x-small" variant="text" :color="isActive('orderedList') ? 'primary' : ''" @click="toggleOrderedList" />
-          <v-btn icon="mdi-format-quote-close" size="x-small" variant="text" :color="isActive('blockquote') ? 'primary' : ''" @click="toggleBlockquote" />
+          <v-btn
+            icon="mdi-link"
+            size="x-small"
+            variant="text"
+            :color="isActive('link') ? 'primary' : ''"
+            @click="setLink" />
+          <v-btn
+            icon="mdi-format-list-bulleted"
+            size="x-small"
+            variant="text"
+            :color="isActive('bulletList') ? 'primary' : ''"
+            @click="toggleBulletList" />
+          <v-btn
+            icon="mdi-format-list-numbered"
+            size="x-small"
+            variant="text"
+            :color="isActive('orderedList') ? 'primary' : ''"
+            @click="toggleOrderedList" />
+          <v-btn
+            icon="mdi-format-quote-close"
+            size="x-small"
+            variant="text"
+            :color="isActive('blockquote') ? 'primary' : ''"
+            @click="toggleBlockquote" />
         </div>
       </v-menu>
     </div>
@@ -343,20 +469,15 @@ onUnmounted(() => {
           ref="mentionMenuEl"
           class="mention-menu"
           :style="{ top: mentionCoords.top + 'px', left: mentionCoords.left + 'px' }"
-          @mousedown.prevent
-        >
+          @mousedown.prevent>
           <div
             v-for="(m, i) in mentionCandidates"
             :key="m.clientId"
             class="mention-item"
             :class="{ active: i === mentionIndex }"
             @click="acceptMention(m)"
-            @mouseenter="mentionIndex = i"
-          >
-            <v-icon
-              size="13"
-              :color="m.isBot ? 'secondary' : 'primary'"
-            >{{ m.isBot ? 'mdi-robot' : 'mdi-at' }}</v-icon>
+            @mouseenter="mentionIndex = i">
+            <v-icon size="13" :color="m.isBot ? 'secondary' : 'primary'">{{ m.isBot ? 'mdi-robot' : 'mdi-at' }}</v-icon>
             <!-- Explicit "AI" tag so it's unmistakable this entry is a bot -->
             <span v-if="m.isBot" class="ai-tag">AI</span>
             <span>{{ m.nickname }}</span>
@@ -479,7 +600,13 @@ onUnmounted(() => {
   color: var(--dc-blue, #7cb3ff);
 }
 @media (max-width: 480px) {
-  .combined-bar { padding: 2px 4px; gap: 4px; }
-  .editor-row { padding: 6px 4px; gap: 4px; }
+  .combined-bar {
+    padding: 2px 4px;
+    gap: 4px;
+  }
+  .editor-row {
+    padding: 6px 4px;
+    gap: 4px;
+  }
 }
 </style>

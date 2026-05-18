@@ -1,8 +1,8 @@
 import type { RTCSignal } from '@/types'
 
-type DataHandler    = (fromId: string, data: string) => void
-type SignalSender   = (to: string, payload: RTCSignal) => void
-type ChannelOpenCb  = (peerId: string) => void
+type DataHandler = (fromId: string, data: string) => void
+type SignalSender = (to: string, payload: RTCSignal) => void
+type ChannelOpenCb = (peerId: string) => void
 type ChannelCloseCb = (peerId: string) => void
 
 // STUN list comes from the server (/api/ice) so it stays in lock-step with
@@ -20,9 +20,12 @@ export async function loadBaseIceServers(): Promise<RTCIceServer[]> {
   if (baseIceCache) return baseIceCache
   if (!baseIcePromise) {
     baseIcePromise = fetch('/api/ice')
-      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((j: { iceServers?: RTCIceServer[] }) => (j.iceServers?.length ? j.iceServers : FALLBACK_STUN))
-      .catch(e => { console.warn('[ice] /api/ice failed, using fallback:', e); return FALLBACK_STUN })
+      .catch(e => {
+        console.warn('[ice] /api/ice failed, using fallback:', e)
+        return FALLBACK_STUN
+      })
       .then(servers => {
         const out = [...servers]
         if (import.meta.env.DEV) {
@@ -50,7 +53,7 @@ function getBaseIceServers(): RTCIceServer[] {
 }
 
 const HEARTBEAT_MS = 3000
-const TIMEOUT_MS   = 10000
+const TIMEOUT_MS = 10000
 
 export function useWebRTC(
   sendSignal: SignalSender,
@@ -58,9 +61,9 @@ export function useWebRTC(
   onChannelOpen?: ChannelOpenCb,
   onChannelClose?: ChannelCloseCb,
 ) {
-  const peers       = new Map<string, RTCPeerConnection>()
-  const channels    = new Map<string, RTCDataChannel>()
-  const lastHb      = new Map<string, number>()
+  const peers = new Map<string, RTCPeerConnection>()
+  const channels = new Map<string, RTCDataChannel>()
+  const lastHb = new Map<string, number>()
   const makingOffer = new Map<string, boolean>()
 
   // Dynamic TURN servers fetched from server at join time
@@ -87,13 +90,18 @@ export function useWebRTC(
     const next = getIceServers()
     for (const [peerId, pc] of peers) {
       if (pc.connectionState === 'closed') continue
-      try { pc.setConfiguration({ iceServers: next }) }
-      catch (e) { console.warn('[rtc] setConfiguration failed for', peerId, e) }
       try {
-        if (await detectConnectionType(peerId) === 'turn') {
+        pc.setConfiguration({ iceServers: next })
+      } catch (e) {
+        console.warn('[rtc] setConfiguration failed for', peerId, e)
+      }
+      try {
+        if ((await detectConnectionType(peerId)) === 'turn') {
           pc.restartIce()
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -102,7 +110,7 @@ export function useWebRTC(
   // ──────────────────────────────────────────────
   // Create / get peer connection
   // ──────────────────────────────────────────────
-  function createPeer(peerId: string, polite: boolean): RTCPeerConnection {
+  function createPeer(peerId: string, _polite: boolean): RTCPeerConnection {
     if (peers.has(peerId)) return peers.get(peerId)!
 
     const pc = new RTCPeerConnection({ iceServers: getIceServers() })
@@ -123,7 +131,7 @@ export function useWebRTC(
         makingOffer.set(peerId, true)
         await pc.setLocalDescription()
         sendSignal(peerId, { sdp: pc.localDescription! })
-      } catch(e) {
+      } catch (e) {
         console.warn('[rtc] onnegotiationneeded error:', e)
       } finally {
         makingOffer.set(peerId, false)
@@ -146,8 +154,15 @@ export function useWebRTC(
     }
 
     ch.onmessage = ({ data }) => {
-      if (data === '__hb__') { lastHb.set(peerId, Date.now()); ch.send('__ack__'); return }
-      if (data === '__ack__') { lastHb.set(peerId, Date.now()); return }
+      if (data === '__hb__') {
+        lastHb.set(peerId, Date.now())
+        ch.send('__ack__')
+        return
+      }
+      if (data === '__ack__') {
+        lastHb.set(peerId, Date.now())
+        return
+      }
       onData(peerId, data)
     }
 
@@ -170,8 +185,7 @@ export function useWebRTC(
 
     if (payload.sdp) {
       const offerCollision =
-        payload.sdp.type === 'offer' &&
-        ((makingOffer.get(fromId) ?? false) || pc.signalingState !== 'stable')
+        payload.sdp.type === 'offer' && ((makingOffer.get(fromId) ?? false) || pc.signalingState !== 'stable')
 
       const ignoreOffer = !polite && offerCollision
       if (ignoreOffer) return
@@ -185,8 +199,11 @@ export function useWebRTC(
     }
 
     if (payload.candidate) {
-      try { await pc.addIceCandidate(payload.candidate) }
-      catch { /* stale candidate, ignore */ }
+      try {
+        await pc.addIceCandidate(payload.candidate)
+      } catch {
+        /* stale candidate, ignore */
+      }
     }
   }
 
@@ -203,14 +220,16 @@ export function useWebRTC(
       for (const [, report] of stats) {
         if (report.type === 'candidate-pair' && report.nominated) {
           const remote = stats.get(report.remoteCandidateId)
-          const local  = stats.get(report.localCandidateId)
+          const local = stats.get(report.localCandidateId)
           if (remote?.candidateType === 'relay' || local?.candidateType === 'relay') {
             return 'turn'
           }
           return 'p2p'
         }
       }
-    } catch { /* stats not available */ }
+    } catch {
+      /* stats not available */
+    }
     return 'p2p'
   }
 
@@ -246,7 +265,10 @@ export function useWebRTC(
   }
 
   function stopHeartbeat() {
-    if (hbTimer) { clearInterval(hbTimer); hbTimer = null }
+    if (hbTimer) {
+      clearInterval(hbTimer)
+      hbTimer = null
+    }
   }
 
   // ──────────────────────────────────────────────
@@ -261,7 +283,11 @@ export function useWebRTC(
     // connected" until the user tried to send something.
     const ch = channels.get(peerId)
     if (ch) {
-      try { ch.close() } catch { /* ignore */ }
+      try {
+        ch.close()
+      } catch {
+        /* ignore */
+      }
       channels.delete(peerId)
       lastHb.delete(peerId)
       onChannelClose?.(peerId)

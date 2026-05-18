@@ -12,9 +12,7 @@ export function registerResources(server: McpServer) {
     'darkenchat://agent-guide',
     { description: 'DarkenChat usage guide for AI agents', mimeType: 'text/markdown' },
     async () => {
-      const text = existsSync(agentMdPath)
-        ? readFileSync(agentMdPath, 'utf8')
-        : 'AGENT.md not found'
+      const text = existsSync(agentMdPath) ? readFileSync(agentMdPath, 'utf8') : 'AGENT.md not found'
       return { contents: [{ uri: 'darkenchat://agent-guide', text, mimeType: 'text/markdown' }] }
     },
   )

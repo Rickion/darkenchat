@@ -8,21 +8,22 @@ import { useTurnStore } from '@/stores/turn'
 import { useFilesStore } from '@/stores/files'
 import { useVoiceStore } from '@/stores/voice'
 import type { Message, S2C, RTCSignal, FileMeta, VoiceSessionMeta } from '@/types'
+import { PROTOCOL_VERSION } from '@/types'
 import { nanoid } from 'nanoid'
 import { calcDeviceScore } from '@/utils/score'
 
 // Max age of messages included in catch-up bundles (10 minutes)
 const CATCHUP_MAX_AGE_MS = 10 * 60 * 1000
 // Max number of messages in a catch-up bundle
-const CATCHUP_MAX_COUNT  = 100
+const CATCHUP_MAX_COUNT = 100
 
 // File transfer
-export const MAX_FILE_SIZE = 5 * 1024 * 1024  // 5 MB
+export const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5 MB
 // Files below this size are fetched eagerly the moment the file message lands
 // (so images/audio/video render inline with no click); files at or above it
 // require an explicit click to fetch (media) or download (other).
-export const AUTO_FETCH_SIZE = 2 * 1024 * 1024  // 2 MB
-const FILE_CHUNK_SIZE = 32 * 1024              // 32 KB binary → ~43 KB base64
+export const AUTO_FETCH_SIZE = 2 * 1024 * 1024 // 2 MB
+const FILE_CHUNK_SIZE = 32 * 1024 // 32 KB binary → ~43 KB base64
 
 // Files of these MIME families can be rendered / played inline in the chat log.
 function isDisplayableMime(mime: string): boolean {
@@ -59,21 +60,25 @@ type RoomEvent =
   | { event: 'room_ended' }
   | { event: 'room_banned' }
   | { event: 'connection_failed' }
-  | { event: 'relay_request' }   // WS relay needed — user must confirm
-  | { event: 'relay_active' }    // First incoming relay message (informational)
-  | { event: 'p2p_recovered' }   // P2P recovered to center before user decided on relay
-  | VoiceEvent                   // mic_denied / voice_full
+  | { event: 'relay_request' } // WS relay needed — user must confirm
+  | { event: 'relay_active' } // First incoming relay message (informational)
+  | { event: 'p2p_recovered' } // P2P recovered to center before user decided on relay
+  | { event: 'protocol_mismatch' } // Client + server are on different protocol versions
+  | VoiceEvent // mic_denied / voice_full
 
 export function useRoom(onEvent: (e: RoomEvent) => void) {
   const roomStore = useRoomStore()
-  const msgStore  = useMessagesStore()
+  const msgStore = useMessagesStore()
   const connStore = useConnectionStore()
   const turnStore = useTurnStore()
   const filesStore = useFilesStore()
   const voiceStore = useVoiceStore()
 
   // Forward-declared so the signaling callback below can dispatch into it;
-  // assigned after `signaling` and `sendDirected` have been set up.
+  // assigned after `signaling` and `sendDirected` have been set up. Must be
+  // `let` (not `const`) because the assignment is not at the declaration site
+  // — the closures above need the binding to exist first.
+  // eslint-disable-next-line prefer-const
   let voice!: ReturnType<typeof useVoice>
 
   // ──────────────────────────────────────────────
@@ -111,7 +116,9 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         try {
           const parsed = JSON.parse(raw)
           if (parsed.id) msgStore.markFailed(parsed.id)
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
       connStore.state = 'failed'
     }
@@ -125,12 +132,12 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     (to, payload) => signaling.send({ type: 'signal', roomKey: roomStore.key, to, payload }),
     (fromId, raw) => handleData(fromId, raw),
     // onChannelOpen: runs when a DataChannel becomes open
-    async (peerId) => {
+    async peerId => {
       // 1. If we are the center, send catch-up history to returning members only
       if (roomStore.isCenter) {
         const peer = roomStore.members.find(m => m.clientId === peerId)
         if (peer?.isReturning) {
-          const cutoff  = Date.now() - CATCHUP_MAX_AGE_MS
+          const cutoff = Date.now() - CATCHUP_MAX_AGE_MS
           const history = msgStore.messages
             .filter(m => (m.type === 'chat' || m.type === 'forward') && m.timestamp > cutoff)
             .slice(-CATCHUP_MAX_COUNT)
@@ -161,7 +168,12 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
           for (const [id, raw] of relayQueue) {
             if (rtc.hasOpenChannel(id)) rtc.sendTo(id, raw)
             else {
-              try { const p = JSON.parse(raw); if (p.id) msgStore.markFailed(p.id) } catch { /* ignore */ }
+              try {
+                const p = JSON.parse(raw)
+                if (p.id) msgStore.markFailed(p.id)
+              } catch {
+                /* ignore */
+              }
             }
           }
           relayQueue.length = 0
@@ -174,7 +186,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       }
     },
     // onChannelClose: DataChannel closed, trigger relay fallback if needed
-    (peerId) => {
+    peerId => {
       // The center's link to me died (heartbeat timeout, remote close, ...).
       // Flip the indicator off "P2P" immediately so the badge stops lying,
       // and pop the relay-confirmation dialog right away rather than waiting
@@ -194,19 +206,18 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   // ──────────────────────────────────────────────
   const signaling = useSignaling((msg: S2C) => {
     switch (msg.type) {
-
       case 'joined': {
         // Server may have suffixed the nickname (e.g. "alice" → "alice-2") to dedup.
         const requestedNick = roomStore.nickname
-        const assignedNick  = msg.nickname ?? requestedNick
+        const assignedNick = msg.nickname ?? requestedNick
         roomStore.setRoom({
-          key:         roomStore.key,
-          clientId:    msg.clientId,
-          nickname:    assignedNick,
-          centerId:    msg.centerId,
-          chairId:     msg.chairId,
+          key: roomStore.key,
+          clientId: msg.clientId,
+          nickname: assignedNick,
+          centerId: msg.centerId,
+          chairId: msg.chairId,
           nicknameSet: msg.nicknameSet,
-          members:     msg.members,
+          members: msg.members,
           aiTurnLimit: msg.aiTurnLimit,
         })
         msgStore.load(roomStore.key)
@@ -217,9 +228,13 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         if (msg.clientId !== msg.centerId) {
           rtc.createPeer(msg.centerId, true /* polite */)
         }
-        rtc.startHeartbeat((timedOutId) => {
+        rtc.startHeartbeat(timedOutId => {
           if (timedOutId === roomStore.centerId) {
-            signaling.send({ type: 'score', roomKey: roomStore.key, score: calcDeviceScore(roomStore.members.length, connStore.state) })
+            signaling.send({
+              type: 'score',
+              roomKey: roomStore.key,
+              score: calcDeviceScore(roomStore.members.length, connStore.state),
+            })
             roomStore.removeMember(timedOutId)
           }
           // Non-center P2P timeout: relay fallback keeps messages flowing.
@@ -262,7 +277,11 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         voice.onMemberLeftRoom(msg.clientId)
         addSystemMessage('system.leave', { name: msg.nickname })
         if (wasCenter) {
-          signaling.send({ type: 'score', roomKey: roomStore.key, score: calcDeviceScore(roomStore.members.length, connStore.state) })
+          signaling.send({
+            type: 'score',
+            roomKey: roomStore.key,
+            score: calcDeviceScore(roomStore.members.length, connStore.state),
+          })
         }
         break
       }
@@ -352,9 +371,25 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         break
       }
 
-      case 'kicked':      onEvent({ event: 'kicked' });       break
-      case 'room_ended':  onEvent({ event: 'room_ended' });   break
-      case 'room_banned': onEvent({ event: 'room_banned' });  break
+      case 'kicked':
+        onEvent({ event: 'kicked' })
+        break
+      case 'room_ended':
+        onEvent({ event: 'room_ended' })
+        break
+      case 'room_banned':
+        onEvent({ event: 'room_banned' })
+        break
+
+      case 'error': {
+        // Server-side rejection. The only error code we surface specially
+        // is the protocol-version mismatch — the rest (rate_limited, room_full,
+        // bot_limit, …) currently fall through and the user will see the
+        // generic connection-lost path. Add cases here as they become
+        // actionable in the UI.
+        if (msg.code === 'protocol_version_mismatch') onEvent({ event: 'protocol_mismatch' })
+        break
+      }
 
       case 'room_config': {
         // Chair changed the AI hard turn cap. Update local state and post a
@@ -483,7 +518,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         const vmeta = msg.meta as unknown as VoiceSessionMeta
         if (vmeta.voiceKind === 'session') {
           if (!voiceStore.activeSessionId) {
-            voiceStore.activeSessionId        = vmeta.sessionId
+            voiceStore.activeSessionId = vmeta.sessionId
             voiceStore.activeSessionInitiator = vmeta.initiatorId
             voiceStore.activeSessionStartedAt = vmeta.startedAt
           }
@@ -497,7 +532,9 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         }
       }
       roomStore.reconnecting = false
-    } catch { /* malformed */ }
+    } catch {
+      /* malformed */
+    }
   }
 
   // ──────────────────────────────────────────────
@@ -536,10 +573,11 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
 
   // Append a participant to the session bubble (idempotent on clientId).
   function appendParticipantToSessionBubble(sessionId: string, clientId: string, joinedAt: number) {
-    const nickname = clientId === roomStore.clientId
-      ? roomStore.nickname
-      : roomStore.members.find(m => m.clientId === clientId)?.nickname ?? clientId.slice(0, 4)
-    msgStore.update(sessionId, (m) => {
+    const nickname =
+      clientId === roomStore.clientId
+        ? roomStore.nickname
+        : (roomStore.members.find(m => m.clientId === clientId)?.nickname ?? clientId.slice(0, 4))
+    msgStore.update(sessionId, m => {
       const meta = m.meta as unknown as VoiceSessionMeta | undefined
       if (!meta || meta.voiceKind !== 'session') return
       if (meta.participants.some(p => p.clientId === clientId)) return
@@ -550,7 +588,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   // Mark a session bubble as ended; UI uses this to drop the "Join" affordance
   // while keeping the participant list visible.
   function markSessionEnded(sessionId: string, endedAt: number) {
-    msgStore.update(sessionId, (m) => {
+    msgStore.update(sessionId, m => {
       const meta = m.meta as unknown as VoiceSessionMeta | undefined
       if (!meta || meta.voiceKind !== 'session') return
       if (meta.endedAt) return
@@ -575,25 +613,25 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     if (!isInitiator || !meta) return
     // Initiator's client publishes the summary as a system-perspective bubble.
     const summaryMeta: VoiceSessionMeta = {
-      voiceKind:         'summary',
+      voiceKind: 'summary',
       sessionId,
-      initiatorId:       meta.initiatorId,
+      initiatorId: meta.initiatorId,
       initiatorNickname: meta.initiatorNickname,
-      startedAt:         meta.startedAt,
-      participants:      [...meta.participants],
+      startedAt: meta.startedAt,
+      participants: [...meta.participants],
       endedAt,
-      durationMs:        Math.max(0, endedAt - meta.startedAt),
+      durationMs: Math.max(0, endedAt - meta.startedAt),
     }
     dispatch({
-      id:        nanoid(),
-      type:      'voice',
-      from:      'system',
-      fromId:    'system',
-      content:   '',
+      id: nanoid(),
+      type: 'voice',
+      from: 'system',
+      fromId: 'system',
+      content: '',
       timestamp: endedAt,
-      roomKey:   roomStore.key,
-      isSystem:  true,
-      meta:      summaryMeta as unknown as Record<string, unknown>,
+      roomKey: roomStore.key,
+      isSystem: true,
+      meta: summaryMeta as unknown as Record<string, unknown>,
     })
   }
 
@@ -608,7 +646,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     onEvent,
     {
       onParticipantJoin: appendParticipantToSessionBubble,
-      onSessionDrained:  finalizeSession,
+      onSessionDrained: finalizeSession,
     },
   )
 
@@ -620,7 +658,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   // session id IS the message id, so peers can locate the bubble from any voice
   // control payload.
   async function startVoiceSession() {
-    if (voiceStore.activeSessionId) return  // a call is already running
+    if (voiceStore.activeSessionId) return // a call is already running
     // Pre-flight the mic so a denied permission doesn't leave a stillborn
     // session bubble in everyone's history.
     const micOk = await voice.prepareMic()
@@ -629,46 +667,48 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     const sessionId = nanoid()
     const startedAt = Date.now()
     const sessionMeta: VoiceSessionMeta = {
-      voiceKind:         'session',
+      voiceKind: 'session',
       sessionId,
-      initiatorId:       roomStore.clientId,
+      initiatorId: roomStore.clientId,
       initiatorNickname: roomStore.nickname,
       startedAt,
-      participants:      [],
+      participants: [],
     }
-    voiceStore.activeSessionId        = sessionId
+    voiceStore.activeSessionId = sessionId
     voiceStore.activeSessionInitiator = roomStore.clientId
     voiceStore.activeSessionStartedAt = startedAt
     dispatch({
-      id:        sessionId,
-      type:      'voice',
-      from:      'system',
-      fromId:    'system',
-      content:   '',
+      id: sessionId,
+      type: 'voice',
+      from: 'system',
+      fromId: 'system',
+      content: '',
       timestamp: startedAt,
-      roomKey:   roomStore.key,
-      isSystem:  true,
-      meta:      sessionMeta as unknown as Record<string, unknown>,
+      roomKey: roomStore.key,
+      isSystem: true,
+      meta: sessionMeta as unknown as Record<string, unknown>,
     })
     await voice.joinVoice(sessionId)
   }
 
   async function joinVoiceSession(sessionId: string) {
     if (voiceStore.inVoice) return
-    if (voiceStore.activeSessionId !== sessionId) return  // session already over
+    if (voiceStore.activeSessionId !== sessionId) return // session already over
     await voice.joinVoice(sessionId)
   }
 
   function handleFileControl(parsed: any) {
     switch (parsed.type) {
-
       case 'file_request': {
         // Someone wants to download a file I'm hosting.
         const file = filesStore.getOutgoing(parsed.fileId)
         if (!file) {
           sendDirected(parsed.from, {
-            type: 'file_error', from: roomStore.clientId, to: parsed.from,
-            fileId: parsed.fileId, reason: 'gone',
+            type: 'file_error',
+            from: roomStore.clientId,
+            to: parsed.from,
+            fileId: parsed.fileId,
+            reason: 'gone',
           })
           return
         }
@@ -678,7 +718,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
 
       case 'file_chunk': {
         const inc = filesStore.incoming.get(parsed.fileId)
-        if (!inc) return  // request was cancelled or never started
+        if (!inc) return // request was cancelled or never started
         const buf = base64ToArrayBuffer(parsed.data)
         filesStore.appendIncoming(parsed.fileId, buf)
         // Last chunk: assemble, then either save to disk or expose as a blob
@@ -705,16 +745,16 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
 
   async function streamFileTo(requesterId: string, fileId: string, file: File) {
     try {
-      const buf   = await file.arrayBuffer()
+      const buf = await file.arrayBuffer()
       const total = Math.max(1, Math.ceil(buf.byteLength / FILE_CHUNK_SIZE))
       for (let i = 0; i < total; i++) {
         const slice = buf.slice(i * FILE_CHUNK_SIZE, (i + 1) * FILE_CHUNK_SIZE)
         sendDirected(requesterId, {
           type: 'file_chunk',
           from: roomStore.clientId,
-          to:   requesterId,
+          to: requesterId,
           fileId,
-          seq:  i,
+          seq: i,
           total,
           data: arrayBufferToBase64(slice),
         })
@@ -723,8 +763,11 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       }
     } catch {
       sendDirected(requesterId, {
-        type: 'file_error', from: roomStore.clientId, to: requesterId,
-        fileId, reason: 'read_failed',
+        type: 'file_error',
+        from: roomStore.clientId,
+        to: requesterId,
+        fileId,
+        reason: 'read_failed',
       })
     }
   }
@@ -747,15 +790,15 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   }
 
   // ─── Public file API ─────────────────────────────────────
-  function attachFile(file: File): { ok: true } | { ok: false, reason: 'too_large' } {
+  function attachFile(file: File): { ok: true } | { ok: false; reason: 'too_large' } {
     if (file.size > MAX_FILE_SIZE) return { ok: false, reason: 'too_large' }
     const fileId = nanoid()
     filesStore.setOutgoing(fileId, file)
     const meta: FileMeta = {
       fileId,
-      name:    file.name,
-      size:    file.size,
-      mime:    file.type || 'application/octet-stream',
+      name: file.name,
+      size: file.size,
+      mime: file.type || 'application/octet-stream',
       ownerId: roomStore.clientId,
     }
     // The sender sees their own image/audio/video inline straight away.
@@ -763,14 +806,14 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       filesStore.setObjectUrl(fileId, URL.createObjectURL(file))
     }
     dispatch({
-      id:        nanoid(),
-      type:      'file',
-      from:      roomStore.nickname,
-      fromId:    roomStore.clientId,
-      content:   file.name,
+      id: nanoid(),
+      type: 'file',
+      from: roomStore.nickname,
+      fromId: roomStore.clientId,
+      content: file.name,
       timestamp: Date.now(),
-      roomKey:   roomStore.key,
-      meta:      meta as unknown as Record<string, unknown>,
+      roomKey: roomStore.key,
+      meta: meta as unknown as Record<string, unknown>,
     })
     return { ok: true }
   }
@@ -806,9 +849,9 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     filesStore.setFetchMode(meta.fileId, 'save')
     filesStore.startIncoming(meta.fileId, meta.size, meta.name, meta.mime, meta.ownerId)
     sendDirected(meta.ownerId, {
-      type:   'file_request',
-      from:   roomStore.clientId,
-      to:     meta.ownerId,
+      type: 'file_request',
+      from: roomStore.clientId,
+      to: meta.ownerId,
       fileId: meta.fileId,
     })
   }
@@ -821,7 +864,10 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     // I'm the owner — expose my own local copy directly.
     if (meta.ownerId === roomStore.clientId) {
       const file = filesStore.getOutgoing(meta.fileId)
-      if (!file) { filesStore.setStatus(meta.fileId, 'error'); return }
+      if (!file) {
+        filesStore.setStatus(meta.fileId, 'error')
+        return
+      }
       filesStore.setObjectUrl(meta.fileId, URL.createObjectURL(file))
       return
     }
@@ -835,9 +881,9 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     filesStore.setFetchMode(meta.fileId, 'display')
     filesStore.startIncoming(meta.fileId, meta.size, meta.name, meta.mime, meta.ownerId)
     sendDirected(meta.ownerId, {
-      type:   'file_request',
-      from:   roomStore.clientId,
-      to:     meta.ownerId,
+      type: 'file_request',
+      from: roomStore.clientId,
+      to: meta.ownerId,
       fileId: meta.fileId,
     })
   }
@@ -873,7 +919,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       // and an `expiresAt` we use to schedule pre-emptive rotation.
       const meteredRes = await fetch('/api/turn-metered').catch(() => null)
       if (meteredRes?.ok) {
-        const m = await meteredRes.json() as {
+        const m = (await meteredRes.json()) as {
           enabled?: boolean
           iceServers?: RTCIceServer[]
           expiresAt?: number
@@ -918,7 +964,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       // (immune to nickname collisions). On first join it's empty and the
       // server falls back to nickname matching.
       const lastClientId = roomStore.clientId || undefined
-      signaling.send({ type: 'join', roomKey: key, nickname, lastClientId })
+      signaling.send({ type: 'join', roomKey: key, nickname, lastClientId, protocolVersion: PROTOCOL_VERSION })
     } catch {
       onEvent({ event: 'connection_failed' })
     }
@@ -932,11 +978,14 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   // can hand off to a new one before the old creds stop being accepted on
   // Refresh — keeping any in-progress relay session uninterrupted.
   let rotationTimer: ReturnType<typeof setTimeout> | null = null
-  const ROTATION_LEAD_S = 600   // 10 min
-  const ROTATION_FALLBACK_S = 60  // retry on transient errors
+  const ROTATION_LEAD_S = 600 // 10 min
+  const ROTATION_FALLBACK_S = 60 // retry on transient errors
 
   function clearMeteredRotation() {
-    if (rotationTimer) { clearTimeout(rotationTimer); rotationTimer = null }
+    if (rotationTimer) {
+      clearTimeout(rotationTimer)
+      rotationTimer = null
+    }
   }
 
   function scheduleMeteredRotation() {
@@ -957,7 +1006,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         rotationTimer = setTimeout(rotateMeteredCreds, ROTATION_FALLBACK_S * 1000)
         return
       }
-      const m = await r.json() as {
+      const m = (await r.json()) as {
         enabled?: boolean
         iceServers?: RTCIceServer[]
         expiresAt?: number
@@ -1003,13 +1052,13 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   // ──────────────────────────────────────────────
   function sendMessage(content: string) {
     dispatch({
-      id:        nanoid(),
-      type:      'chat',
-      from:      roomStore.nickname,
-      fromId:    roomStore.clientId,
+      id: nanoid(),
+      type: 'chat',
+      from: roomStore.nickname,
+      fromId: roomStore.clientId,
       content,
       timestamp: Date.now(),
-      roomKey:   roomStore.key,
+      roomKey: roomStore.key,
     })
   }
 
@@ -1018,13 +1067,13 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   // ──────────────────────────────────────────────
   function sendForward(msgs: Message[], note: string) {
     dispatch({
-      id:        nanoid(),
-      type:      'forward',
-      from:      roomStore.nickname,
-      fromId:    roomStore.clientId,
-      content:   '',
+      id: nanoid(),
+      type: 'forward',
+      from: roomStore.nickname,
+      fromId: roomStore.clientId,
+      content: '',
       timestamp: Date.now(),
-      roomKey:   roomStore.key,
+      roomKey: roomStore.key,
       forwardOf: { messages: msgs, note },
     })
   }
@@ -1075,14 +1124,14 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   // ──────────────────────────────────────────────
   function addSystemMessage(i18nKey: string, params: Record<string, string> = {}) {
     msgStore.add({
-      id:        nanoid(),
-      type:      'system',
-      from:      'system',
-      fromId:    'system',
-      content:   JSON.stringify({ key: i18nKey, params }),
+      id: nanoid(),
+      type: 'system',
+      from: 'system',
+      fromId: 'system',
+      content: JSON.stringify({ key: i18nKey, params }),
       timestamp: Date.now(),
-      roomKey:   roomStore.key,
-      isSystem:  true,
+      roomKey: roomStore.key,
+      isSystem: true,
     })
   }
 
@@ -1093,13 +1142,21 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   }
 
   return {
-    join, leave, sendMessage, sendForward, resendMessage,
-    attachFile, requestFileDownload, requestFileView,
+    join,
+    leave,
+    sendMessage,
+    sendForward,
+    resendMessage,
+    attachFile,
+    requestFileDownload,
+    requestFileView,
     startVoiceSession,
     joinVoiceSession,
     leaveVoice: () => voice.leaveVoice(),
     toggleMute: () => voice.toggleMute(),
-    confirmRelay, signaling, roomStore,
+    confirmRelay,
+    signaling,
+    roomStore,
     setAiTurnLimit,
   }
 }

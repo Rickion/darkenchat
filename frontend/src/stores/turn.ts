@@ -20,7 +20,7 @@ export const useTurnStore = defineStore('turn', () => {
   // used by useRoom to schedule rotation ~10 min before the temp creds die.
   const meteredEnabled = ref(false)
   const meteredIceServers = ref<RTCIceServer[]>([])
-  const meteredExpiresAt  = ref(0)
+  const meteredExpiresAt = ref(0)
 
   // Convenience: first URL from server (shown as placeholder / default label)
   const serverUrl = computed(() => serverConfig.value?.urls[0] ?? '')
@@ -29,22 +29,25 @@ export const useTurnStore = defineStore('turn', () => {
   const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null') ?? {}
 
   // Pre-fill custom URL from localStorage on startup
-  const customUrl        = ref<string>(saved.url        ?? '')
-  const customUsername   = ref<string>(saved.username   ?? '')
+  const customUrl = ref<string>(saved.url ?? '')
+  const customUsername = ref<string>(saved.username ?? '')
   const customCredential = ref<string>(saved.credential ?? '')
   // true = use custom instead of server default
-  const useCustom        = ref<boolean>(saved.useCustom ?? false)
+  const useCustom = ref<boolean>(saved.useCustom ?? false)
   // true = use Metered.ca built-in provider
-  const useMetered       = ref<boolean>(saved.useMetered ?? false)
+  const useMetered = ref<boolean>(saved.useMetered ?? false)
 
   watch([customUrl, customUsername, customCredential, useCustom, useMetered], () => {
-    localStorage.setItem(LS_KEY, JSON.stringify({
-      url:        customUrl.value,
-      username:   customUsername.value,
-      credential: customCredential.value,
-      useCustom:  useCustom.value,
-      useMetered: useMetered.value,
-    }))
+    localStorage.setItem(
+      LS_KEY,
+      JSON.stringify({
+        url: customUrl.value,
+        username: customUsername.value,
+        credential: customCredential.value,
+        useCustom: useCustom.value,
+        useMetered: useMetered.value,
+      }),
+    )
   })
 
   // ── Effective config (what useWebRTC actually uses) ──────────────────────
@@ -57,14 +60,21 @@ export const useTurnStore = defineStore('turn', () => {
     }
     if (useCustom.value && customUrl.value.trim()) {
       return {
-        urls:       customUrl.value.split(',').map(s => s.trim()).filter(Boolean),
-        username:   customUsername.value || undefined,
+        urls: customUrl.value
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean),
+        username: customUsername.value || undefined,
         credential: customCredential.value || undefined,
       }
     }
     // Use server config (may be null if server has no TURN)
     return serverConfig.value
-      ? { urls: serverConfig.value.urls, username: serverConfig.value.username, credential: serverConfig.value.credential }
+      ? {
+          urls: serverConfig.value.urls,
+          username: serverConfig.value.username,
+          credential: serverConfig.value.credential,
+        }
       : null
   })
 
@@ -78,23 +88,32 @@ export const useTurnStore = defineStore('turn', () => {
   }
 
   function setMeteredConfig(enabled: boolean, iceServers: RTCIceServer[], expiresAt: number) {
-    meteredEnabled.value     = enabled
-    meteredIceServers.value  = iceServers
-    meteredExpiresAt.value   = expiresAt
+    meteredEnabled.value = enabled
+    meteredIceServers.value = iceServers
+    meteredExpiresAt.value = expiresAt
   }
 
   function reset() {
-    serverConfig.value       = null
-    meteredEnabled.value     = false
-    meteredIceServers.value  = []
-    meteredExpiresAt.value   = 0
+    serverConfig.value = null
+    meteredEnabled.value = false
+    meteredIceServers.value = []
+    meteredExpiresAt.value = 0
   }
 
   return {
-    serverConfig, serverUrl,
-    meteredEnabled, meteredIceServers, meteredExpiresAt, useMetered,
-    customUrl, customUsername, customCredential, useCustom,
+    serverConfig,
+    serverUrl,
+    meteredEnabled,
+    meteredIceServers,
+    meteredExpiresAt,
+    useMetered,
+    customUrl,
+    customUsername,
+    customCredential,
+    useCustom,
     effective,
-    setServerConfig, setMeteredConfig, reset,
+    setServerConfig,
+    setMeteredConfig,
+    reset,
   }
 })

@@ -66,7 +66,10 @@ async function unban(type: 'ip' | 'key', value: string) {
 onMounted(async () => {
   if (token.value) {
     const res = await fetch('/api/admin/rooms', { headers: { 'x-admin-token': token.value } })
-    if (res.ok) { authed.value = true; await loadAll() }
+    if (res.ok) {
+      authed.value = true
+      await loadAll()
+    }
   }
 })
 </script>
@@ -77,15 +80,15 @@ onMounted(async () => {
     <div v-if="!authed" class="token-gate">
       <div class="token-card">
         <div class="text-h6 mb-4 d-flex align-center">
-          <v-icon color="warning" class="mr-2">mdi-ghost</v-icon>{{ t('admin.title') }}
+          <v-icon color="warning" class="mr-2">mdi-ghost</v-icon>
+          {{ t('admin.title') }}
         </div>
         <v-text-field
           v-model="tokenInput"
           :label="t('admin.token_label')"
           type="password"
           :error-messages="tokenError"
-          @keyup.enter="login"
-        />
+          @keyup.enter="login" />
         <v-btn color="primary" block @click="login">{{ t('admin.enter') }}</v-btn>
       </div>
     </div>
@@ -94,7 +97,8 @@ onMounted(async () => {
     <div v-else class="admin-content">
       <div class="admin-header">
         <span class="text-h6 d-flex align-center">
-          <v-icon color="warning" class="mr-2">mdi-ghost</v-icon>{{ t('admin.title') }}
+          <v-icon color="warning" class="mr-2">mdi-ghost</v-icon>
+          {{ t('admin.title') }}
         </span>
         <v-spacer />
         <LanguageSwitcher size="small" />
@@ -121,7 +125,9 @@ onMounted(async () => {
             </thead>
             <tbody>
               <tr v-for="r in rooms" :key="r.key">
-                <td><code>{{ r.key }}</code></td>
+                <td>
+                  <code>{{ r.key }}</code>
+                </td>
                 <td>{{ dayjs(r.createdAt).format('MM-DD HH:mm') }}</td>
                 <td>
                   <v-chip :color="r.banned ? 'error' : 'success'" size="x-small">
@@ -152,7 +158,9 @@ onMounted(async () => {
               <tr v-for="(l, i) in logs" :key="i" :class="{ 'blocked-row': l.blocked }">
                 <td>{{ l.ip }}</td>
                 <td>{{ dayjs(l.timestamp).format('HH:mm:ss') }}</td>
-                <td><code>{{ l.toKey }}</code></td>
+                <td>
+                  <code>{{ l.toKey }}</code>
+                </td>
                 <td>{{ l.action }}</td>
                 <td><v-icon v-if="l.blocked" color="error" size="small">mdi-block-helper</v-icon></td>
               </tr>
@@ -167,14 +175,20 @@ onMounted(async () => {
             <v-list-item v-for="b in bans.filter(b => b.type === 'ip')" :key="b.value">
               <v-list-item-title>{{ b.value }}</v-list-item-title>
               <template #append>
-                <v-btn size="x-small" variant="text" color="warning" @click="unban('ip', b.value)">{{ t('admin.unban') }}</v-btn>
+                <v-btn size="x-small" variant="text" color="warning" @click="unban('ip', b.value)">
+                  {{ t('admin.unban') }}
+                </v-btn>
               </template>
             </v-list-item>
             <v-list-subheader>{{ t('admin.room_keys') }}</v-list-subheader>
             <v-list-item v-for="b in bans.filter(b => b.type === 'key')" :key="b.value">
-              <v-list-item-title><code>{{ b.value }}</code></v-list-item-title>
+              <v-list-item-title>
+                <code>{{ b.value }}</code>
+              </v-list-item-title>
               <template #append>
-                <v-btn size="x-small" variant="text" color="warning" @click="unban('key', b.value)">{{ t('admin.unban') }}</v-btn>
+                <v-btn size="x-small" variant="text" color="warning" @click="unban('key', b.value)">
+                  {{ t('admin.unban') }}
+                </v-btn>
               </template>
             </v-list-item>
           </v-list>
@@ -185,9 +199,15 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.admin-layout { height: 100%; overflow: auto; background: var(--dc-bg); }
+.admin-layout {
+  height: 100%;
+  overflow: auto;
+  background: var(--dc-bg);
+}
 .token-gate {
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   height: 100%;
 }
 .token-card {
@@ -196,12 +216,26 @@ onMounted(async () => {
   border-radius: 16px;
   width: 360px;
 }
-.admin-content { max-width: 1000px; margin: 0 auto; padding: 24px; }
+.admin-content {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 24px;
+}
 .admin-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 20px;
 }
-.admin-tab-body { margin-top: 16px; overflow: auto; }
-.blocked-row { background: rgba(166, 60, 60, 0.1); }
-code { color: var(--dc-gold); font-size: 0.85rem; }
+.admin-tab-body {
+  margin-top: 16px;
+  overflow: auto;
+}
+.blocked-row {
+  background: rgba(166, 60, 60, 0.1);
+}
+code {
+  color: var(--dc-gold);
+  font-size: 0.85rem;
+}
 </style>

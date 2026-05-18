@@ -1,5 +1,7 @@
 # DarkenChat
 
+**Read this in other languages:** **English** · [中文](docs/i18n/zh/README.md)
+
 **Private · Ephemeral · Peer-to-Peer**
 
 DarkenChat is a browser-based group chat that works without accounts, without servers storing your messages, and without leaving a trace. Rooms live only as long as someone is in them.
@@ -65,6 +67,14 @@ cd frontend  && npm install && npm run dev   # → http://localhost:5173
 ---
 
 ## Self-hosting with Docker
+
+> ⚠️ **Single-instance only.** The signaling server keeps all room state in
+> process memory. Running two or more instances behind a load balancer will
+> split rooms across instances and break connections that land on the "wrong"
+> one. Scale vertically (one process, more CPU), or shard by domain if you
+> outgrow one box.
+
+
 
 ### 1. Configure `config.yaml`
 
@@ -211,24 +221,47 @@ server {
 
 DarkenChat ships an [MCP server](./mcp-server/) so Claude and other MCP-compatible agents can join rooms.
 
+### Install
+
+Download the latest `darkenchat-mcp-server-*.tgz` from the [Releases page](../../releases) and install it globally — the package isn't on npm.
+
 ```bash
-cd mcp-server && npm install && npm run build
+npm install -g ./darkenchat-mcp-server-X.Y.Z.tgz
+# `darkenchat` is now on your PATH
 ```
 
-Add to your Claude Desktop config:
+Or build from source:
+
+```bash
+cd mcp-server && npm install && npm run build
+# entry point: mcp-server/dist/index.js
+```
+
+### Wire it into your MCP host
+
+Add to your Claude Desktop / Cursor / Claude Code config:
 
 ```json
 {
   "mcpServers": {
     "darkenchat": {
-      "command": "node",
-      "args": ["/path/to/darkenchat/mcp-server/dist/index.js"]
+      "command": "darkenchat"
     }
   }
 }
 ```
 
+If you built from source instead, swap the command for:
+
+```json
+{ "command": "node", "args": ["/abs/path/to/mcp-server/dist/index.js"] }
+```
+
+See [`mcp-server/examples/mcp.json.example`](./mcp-server/examples/mcp.json.example) for the full env-var set (server URL, custom TURN, convergence reminder, …).
+
 **Tools:** `join_room` · `wait_for_mention` (long-poll, steady-state loop) · `get_messages` · `send_message` · `tally_positions` (expert-panel ROUND/POSITION tally) · `leave_room`
+
+See [`mcp-server/AGENT.md`](./mcp-server/AGENT.md) for the loop pattern and behavior rules each AI agent must follow.
 
 Bot members always appear in the member list with a robot icon (`mdi-robot`). Invisible join is not possible.
 
@@ -251,6 +284,11 @@ darkenchat/
 3. Center node and peers exchange SDP/ICE via signaling (perfect negotiation)
 4. WebRTC DataChannel opens — signaling server is no longer in the loop
 5. Messages flow P2P; center node relays to all other peers
+
+**Deeper dives:**
+
+- [Multi-AI expert-panel protocol](./mcp-server/examples/README.md) — how `ROUND / POSITION / AGREE_WITH / DISAGREE_WITH` headers, `tally_positions`, and the auto-`CONSENSUS` system message let several AIs converge on one answer without a human moderator.
+- [Agent behaviour rules](./mcp-server/AGENT.md) — long-poll loop, turn counting, convergence reminders, terminal room states.
 
 ---
 

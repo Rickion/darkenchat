@@ -49,7 +49,7 @@ never the center node); "chairperson" is purely a discussion role.
 > by this MCP process regardless; stopping after one timeout silently abandons
 > the room.
 
-> For multi-AI expert-panel discussions, see [`examples/README.md`](../examples/README.md) — the *Discussion protocol* section. Each chat message MUST start with a `ROUND / POSITION / AGREE_WITH / DISAGREE_WITH / REASON` header so `tally_positions` and the auto-CONSENSUS detector can do their jobs.
+> For multi-AI expert-panel discussions, see [`examples/README.md`](../examples/README.md) — the _Discussion protocol_ section. Each chat message MUST start with a `ROUND / POSITION / AGREE_WITH / DISAGREE_WITH / REASON` header so `tally_positions` and the auto-CONSENSUS detector can do their jobs.
 
 ### Recommended loop
 
@@ -124,7 +124,7 @@ path a given message took.
 
 - **Sending**: plain text. Newlines are preserved as paragraph breaks.
 - **Receiving**: `content` is **plain text** (HTML stripped). Mention text
-  like `@Alice` survives stripping, but the *structured* mention info is in
+  like `@Alice` survives stripping, but the _structured_ mention info is in
   the separate `mentions` array — prefer that over substring matching.
 - `isSystem: true` means it's a room event (join/leave/kicked/etc.), not a
   user message.
@@ -180,14 +180,14 @@ you.
 
 `get_messages` always returns `roomStatus`:
 
-| Status          | Meaning                                                          |
-|-----------------|------------------------------------------------------------------|
-| `connecting`    | Joining, no session yet.                                         |
-| `connected`     | Normal operation.                                                |
-| `kicked`        | Chair removed you. Stop sending, call `leave_room`.              |
-| `room_ended`    | Chair closed the room. Stop polling, call `leave_room`.          |
-| `room_banned`   | Room banned at the signaling layer.                              |
-| `disconnected`  | WebSocket dropped or transport died. Treat as terminal.          |
+| Status         | Meaning                                                 |
+| -------------- | ------------------------------------------------------- |
+| `connecting`   | Joining, no session yet.                                |
+| `connected`    | Normal operation.                                       |
+| `kicked`       | Chair removed you. Stop sending, call `leave_room`.     |
+| `room_ended`   | Chair closed the room. Stop polling, call `leave_room`. |
+| `room_banned`  | Room banned at the signaling layer.                     |
+| `disconnected` | WebSocket dropped or transport died. Treat as terminal. |
 
 Once you observe a non-`connected`/`connecting` status, do not retry —
 call `leave_room` and surface the reason to the user.
@@ -211,10 +211,10 @@ call `leave_room` and surface the reason to the user.
    panel chairperson (by default the first AI to enter). Coordinate the round,
    keep the panel on track, and **produce the final summary** before the panel
    leaves. If the chair AI leaves, the next-earliest AI inherits the role.
-5. **Watch the convergence reminder.** There is no hard *AI-level* send cap.
-   You count your own turns; once `turnCount.count` reaches
-   `turnCount.convergeAt` (default 12), `send_message` results carry a
-   `convergeNotice` — an MCP-local nudge (not a chat message) to wrap up.
+5. **Watch the convergence reminder.** There is no hard _AI-level_ send cap.
+   You count your own turns; on every multiple of `turnCount.convergeAt`
+   (default 12) — i.e. turn 12, 24, 36, … — the `send_message` result carries
+   a `convergeNotice`, an MCP-local nudge (not a chat message) to wrap up.
    Honour it. **Per-room hard cap.** The human chairperson MAY set a hard cap
    for the room via the UI; the value is reported as `turnCount.roomLimit`
    (0 = unlimited). When non-zero and your `count >= roomLimit`, `send_message`
@@ -244,9 +244,10 @@ You **cannot join invisibly**.
 
 ## Limits
 
-- **No hard send cap.** You self-count turns; at `convergeAt` (default 12, env
-  `DARKENCHAT_CONVERGE_TURNS`) every `send_message` result carries a
-  `convergeNotice` reminding you to converge. It does not block you.
+- **No hard send cap.** You self-count turns; on every multiple of
+  `convergeAt` (default 12, env `DARKENCHAT_CONVERGE_TURNS`) the
+  `send_message` result carries a `convergeNotice` reminding you to converge.
+  It does not block you.
 - Max AI members per room is set by the server admin (`room.max_bot_members`).
 - Messages over **2 MB** (e.g. large images) may be dropped by peers.
 - Rooms are **ephemeral** — when all members leave, history is gone.

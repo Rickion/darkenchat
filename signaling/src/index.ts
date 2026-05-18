@@ -10,10 +10,8 @@ import yaml from 'js-yaml'
 import { nanoid } from 'nanoid'
 
 import type { C2S } from './types.js'
-import {
-  rooms, generateKey, getOrCreateRoom,
-  addMember, removeMember, broadcast, send, memberInfo,
-} from './rooms.js'
+import { PROTOCOL_VERSION } from './types.js'
+import { rooms, generateKey, getOrCreateRoom, addMember, removeMember, broadcast, send, memberInfo } from './rooms.js'
 import { checkAndRecord, bannedKeys, configure as configureGuard } from './guard.js'
 import { handleScore } from './election.js'
 import { registerAdminRoutes, setAdminToken } from './admin.js'
@@ -24,44 +22,39 @@ const __dir = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = process.env.APP_ROOT ?? resolve(__dir, '../..')
 const cfgPath = resolve(APP_ROOT, 'config.yaml')
 const cfg: any = existsSync(cfgPath)
-  ? yaml.load(
-      readFileSync(cfgPath, 'utf8').replace(/\$\{(\w+)\}/g, (_, k) => process.env[k] ?? ''),
-    )
+  ? yaml.load(readFileSync(cfgPath, 'utf8').replace(/\$\{(\w+)\}/g, (_, k) => process.env[k] ?? ''))
   : {}
 
-const HOST  = cfg?.server?.host  ?? '0.0.0.0'
-const PORT  = cfg?.server?.port  ?? 3000
+const HOST = cfg?.server?.host ?? '0.0.0.0'
+const PORT = cfg?.server?.port ?? 3000
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? cfg?.security?.admin_token ?? 'dev-token'
-const CORS_ORIGINS: string[] | true =
-  process.env.CORS_ORIGINS
-    ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
-    : cfg?.server?.cors_origins ?? true
+const CORS_ORIGINS: string[] | true = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
+  : (cfg?.server?.cors_origins ?? true)
 const MAX_MEMBERS = cfg?.room?.max_members ?? 50
-const MAX_BOTS    = cfg?.room?.max_bot_members ?? 10
+const MAX_BOTS = cfg?.room?.max_bot_members ?? 10
 // STUN list advertised by /api/ice so every client (browser + MCP) shares one
 // source of truth. Defaults match the project's historical hardcode.
-const STUN_URLS: string[] = cfg?.ice?.stun_urls ?? [
-  'stun:stun.cloudflare.com:3478',
-  'stun:stun.l.google.com:19302',
-]
+const STUN_URLS: string[] = cfg?.ice?.stun_urls ?? ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302']
 // How often the sweep runs, and how long a member can be silent before it
 // gets evicted. The sweep also drops recentLeft entries past their TTL so
 // the map doesn't grow unbounded.
 const HEARTBEAT_INTERVAL_MS = (cfg?.room?.heartbeat_interval_seconds ?? 3) * 1000
-const HEARTBEAT_TIMEOUT_MS  = (cfg?.room?.heartbeat_timeout_seconds  ?? 10) * 1000
-const RECENT_LEFT_TTL_MS    = 5 * 60 * 1000  // 5 min — matches the "returning member" window
+const HEARTBEAT_TIMEOUT_MS = (cfg?.room?.heartbeat_timeout_seconds ?? 10) * 1000
+const RECENT_LEFT_TTL_MS = 5 * 60 * 1000 // 5 min — matches the "returning member" window
 
 // TURN — env vars take precedence over config.yaml.
 // Auth: TURN_SECRET (HMAC, for coturn use-auth-secret) OR TURN_USERNAME+TURN_CREDENTIAL (static).
 // HMAC is preferred when both are set.
-const TURN_URLS: string[] =
-  process.env.TURN_URLS
-    ? process.env.TURN_URLS.split(',').map(s => s.trim()).filter(Boolean)
-    : (cfg?.ice?.turn?.urls ?? [])
-const TURN_SECRET     = process.env.TURN_SECRET     ?? cfg?.ice?.turn?.auth_secret  ?? ''
-const TURN_USERNAME   = process.env.TURN_USERNAME   ?? ''
+const TURN_URLS: string[] = process.env.TURN_URLS
+  ? process.env.TURN_URLS.split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+  : (cfg?.ice?.turn?.urls ?? [])
+const TURN_SECRET = process.env.TURN_SECRET ?? cfg?.ice?.turn?.auth_secret ?? ''
+const TURN_USERNAME = process.env.TURN_USERNAME ?? ''
 const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL ?? ''
-const TURN_TTL        = cfg?.ice?.turn?.ttl_seconds ?? 3600
+const TURN_TTL = cfg?.ice?.turn?.ttl_seconds ?? 3600
 
 // Metered.ca built-in TURN provider — server-side fetch only.
 // The API key never reaches the browser. Each /api/turn-metered call hits
@@ -69,17 +62,18 @@ const TURN_TTL        = cfg?.ice?.turn?.ttl_seconds ?? 3600
 // plus an `expiresAt` (computed from METERED_TTL) so clients can rotate
 // before the temp credentials die.
 const METERED_API_KEY = process.env.TURN_METERED_API_KEY ?? cfg?.ice?.metered?.api_key ?? ''
-const METERED_DOMAIN  = process.env.TURN_METERED_DOMAIN  ?? cfg?.ice?.metered?.domain  ?? ''
-const METERED_TTL     = Number(process.env.TURN_METERED_TTL ?? cfg?.ice?.metered?.ttl_seconds ?? 7200)
+const METERED_DOMAIN = process.env.TURN_METERED_DOMAIN ?? cfg?.ice?.metered?.domain ?? ''
+const METERED_TTL = Number(process.env.TURN_METERED_TTL ?? cfg?.ice?.metered?.ttl_seconds ?? 7200)
 const METERED_ENABLED =
-  (process.env.TURN_METERED_ENABLED === 'true' || cfg?.ice?.metered?.enabled === true)
-  && !!METERED_API_KEY && !!METERED_DOMAIN
+  (process.env.TURN_METERED_ENABLED === 'true' || cfg?.ice?.metered?.enabled === true) &&
+  !!METERED_API_KEY &&
+  !!METERED_DOMAIN
 
 configureGuard({
-  windowSeconds:       cfg?.security?.rate_limit?.window_seconds      ?? 60,
-  maxKeyProbes:        cfg?.security?.rate_limit?.max_key_probes      ?? 10,
-  banDurationSeconds:  cfg?.security?.rate_limit?.ban_duration_seconds ?? 3600,
-  switchLogMaxEntries: cfg?.log?.switch_log_max_entries               ?? 1000,
+  windowSeconds: cfg?.security?.rate_limit?.window_seconds ?? 60,
+  maxKeyProbes: cfg?.security?.rate_limit?.max_key_probes ?? 10,
+  banDurationSeconds: cfg?.security?.rate_limit?.ban_duration_seconds ?? 3600,
+  switchLogMaxEntries: cfg?.log?.switch_log_max_entries ?? 1000,
 })
 setAdminToken(ADMIN_TOKEN)
 
@@ -126,7 +120,7 @@ app.get('/api/rooms/:key', async (req, reply) => {
 // REST: create room
 app.post('/api/rooms', async (req, reply) => {
   const ip = req.ip
-  const body = req.body as { key?: string } | null ?? {}
+  const body = (req.body as { key?: string } | null) ?? {}
   const key = (body.key ?? '').toUpperCase() || generateKey()
 
   if (checkAndRecord(ip, key, 'create')) {
@@ -163,8 +157,8 @@ app.get('/api/turn-credentials', async (req, reply) => {
 
   if (TURN_SECRET) {
     // HMAC mode: time-limited credentials (coturn use-auth-secret)
-    const expires    = Math.floor(Date.now() / 1000) + TURN_TTL
-    const username   = `${expires}:${nanoid(8)}`
+    const expires = Math.floor(Date.now() / 1000) + TURN_TTL
+    const username = `${expires}:${nanoid(8)}`
     const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64')
     return reply.send({ urls: TURN_URLS, username, credential })
   }
@@ -201,8 +195,9 @@ app.get('/api/turn-metered', async (_req, reply) => {
     }
     const text = await r.text()
     let list: unknown
-    try { list = JSON.parse(text) }
-    catch {
+    try {
+      list = JSON.parse(text)
+    } catch {
       app.log.warn({ body: text.slice(0, 200) }, 'metered upstream returned non-JSON')
       return reply.status(502).send({ error: 'Metered returned non-JSON' })
     }
@@ -224,21 +219,32 @@ app.get('/api/turn-metered', async (_req, reply) => {
 })
 
 // ─── WebSocket ────────────────────────────────────────────
-app.register(async (fastify) => {
+app.register(async fastify => {
   fastify.get('/ws', { websocket: true }, (socket, req) => {
     const ip = req.ip
     let currentClientId: string | null = null
-    let currentRoomKey: string | null  = null
+    let currentRoomKey: string | null = null
 
     socket.on('message', (raw: Buffer | string) => {
       let msg: C2S
-      try { msg = JSON.parse(raw.toString()) }
-      catch { return }
+      try {
+        msg = JSON.parse(raw.toString())
+      } catch {
+        return
+      }
 
       switch (msg.type) {
-
         case 'join': {
           const key = msg.roomKey.toUpperCase()
+
+          // Protocol-version handshake. Absent = legacy client (pre-v1), which
+          // we still accept since v1 is additive. A *mismatched* explicit
+          // version is hard-refused with a friendly error code so the client
+          // can prompt the user to upgrade instead of silently misbehaving.
+          if (msg.protocolVersion !== undefined && msg.protocolVersion !== PROTOCOL_VERSION) {
+            socket.send(JSON.stringify({ type: 'error', code: 'protocol_version_mismatch' }))
+            return
+          }
 
           if (checkAndRecord(ip, key, 'join')) {
             socket.send(JSON.stringify({ type: 'error', code: 'rate_limited' }))
@@ -266,7 +272,7 @@ app.register(async (fastify) => {
             return
           }
 
-          currentRoomKey  = key
+          currentRoomKey = key
 
           // Returning-member detection. Prefer the explicit `lastClientId`
           // handshake (immune to nickname collisions); fall back to nickname
@@ -275,7 +281,7 @@ app.register(async (fastify) => {
           let reusedClientId: string | null = null
           if (msg.lastClientId) {
             for (const [nick, info] of room.recentLeft) {
-              if (info.clientId === msg.lastClientId && (Date.now() - info.leftAt) < RECENT_LEFT_TTL_MS) {
+              if (info.clientId === msg.lastClientId && Date.now() - info.leftAt < RECENT_LEFT_TTL_MS) {
                 isReturning = true
                 reusedClientId = info.clientId
                 room.recentLeft.delete(nick)
@@ -285,7 +291,7 @@ app.register(async (fastify) => {
           }
           if (!isReturning) {
             const info = room.recentLeft.get(msg.nickname)
-            if (info && (Date.now() - info.leftAt) < RECENT_LEFT_TTL_MS) {
+            if (info && Date.now() - info.leftAt < RECENT_LEFT_TTL_MS) {
               isReturning = true
               reusedClientId = info.clientId
               room.recentLeft.delete(msg.nickname)
@@ -308,31 +314,37 @@ app.register(async (fastify) => {
             clientId: currentClientId,
             nickname: finalNick,
             joinedAt: Date.now(),
-            isBot:    msg.isBot ?? false,
-            ws:       socket,
+            isBot: msg.isBot ?? false,
+            ws: socket,
             lastSeen: Date.now(),
           }
 
           addMember(room, member)
 
           // Send joined confirmation to new member
-          socket.send(JSON.stringify({
-            type:        'joined',
-            clientId:    currentClientId,
-            nickname:    finalNick,
-            centerId:    room.centerId,
-            chairId:     room.chairId,
-            isReturning,
-            nicknameSet: room.nicknameSet,
-            aiTurnLimit: room.aiTurnLimit,
-            members:     [...room.members.values()].map(memberInfo),
-          }))
+          socket.send(
+            JSON.stringify({
+              type: 'joined',
+              clientId: currentClientId,
+              nickname: finalNick,
+              centerId: room.centerId,
+              chairId: room.chairId,
+              isReturning,
+              nicknameSet: room.nicknameSet,
+              aiTurnLimit: room.aiTurnLimit,
+              members: [...room.members.values()].map(memberInfo),
+            }),
+          )
 
           // Notify existing members
-          broadcast(room, {
-            type:   'member_join',
-            member: { ...memberInfo(member), isReturning },
-          }, currentClientId)
+          broadcast(
+            room,
+            {
+              type: 'member_join',
+              member: { ...memberInfo(member), isReturning },
+            },
+            currentClientId,
+          )
 
           break
         }
@@ -385,7 +397,7 @@ app.register(async (fastify) => {
           send(target, { type: 'kicked' })
           removeMember(room, msg.targetId)
           broadcast(room, {
-            type:     'member_left',
+            type: 'member_left',
             clientId: msg.targetId,
             nickname: target.nickname,
           })
@@ -399,7 +411,7 @@ app.register(async (fastify) => {
 
           broadcast(room, { type: 'room_ended' })
           rooms.delete(currentRoomKey)
-          currentRoomKey  = null
+          currentRoomKey = null
           currentClientId = null
           break
         }
@@ -416,9 +428,9 @@ app.register(async (fastify) => {
           if (next === room.aiTurnLimit) break
           room.aiTurnLimit = next
           broadcast(room, {
-            type:        'room_config',
+            type: 'room_config',
             aiTurnLimit: next,
-            byClientId:  currentClientId,
+            byClientId: currentClientId,
           })
           break
         }
@@ -446,7 +458,7 @@ app.register(async (fastify) => {
         // Broadcast chair change if needed
         if (room.chairId !== currentClientId) {
           broadcast(room, {
-            type:     'member_left',
+            type: 'member_left',
             clientId: currentClientId,
             nickname: member.nickname,
           })
@@ -454,21 +466,21 @@ app.register(async (fastify) => {
           // Chair changed
           const newChair = room.members.get(room.chairId)
           broadcast(room, {
-            type:     'member_left',
+            type: 'member_left',
             clientId: currentClientId,
             nickname: member.nickname,
           })
           if (newChair) {
             broadcast(room, {
-              type:     'new_chair',
-              chairId:  newChair.clientId,
+              type: 'new_chair',
+              chairId: newChair.clientId,
               nickname: newChair.nickname,
             })
           }
         }
       }
 
-      currentRoomKey  = null
+      currentRoomKey = null
       currentClientId = null
     }
   })
@@ -485,11 +497,15 @@ setInterval(() => {
     // 1. Evict silent members
     for (const member of [...room.members.values()]) {
       if (now - member.lastSeen > HEARTBEAT_TIMEOUT_MS) {
-        try { member.ws.close() } catch { /* already dead */ }
+        try {
+          member.ws.close()
+        } catch {
+          /* already dead */
+        }
         const removed = removeMember(room, member.clientId)
         if (removed && rooms.has(room.key)) {
           broadcast(room, {
-            type:     'member_left',
+            type: 'member_left',
             clientId: removed.clientId,
             nickname: removed.nickname,
           })
@@ -499,8 +515,8 @@ setInterval(() => {
             const newChair = room.members.get(room.chairId)
             if (newChair) {
               broadcast(room, {
-                type:     'new_chair',
-                chairId:  newChair.clientId,
+                type: 'new_chair',
+                chairId: newChair.clientId,
                 nickname: newChair.nickname,
               })
             }

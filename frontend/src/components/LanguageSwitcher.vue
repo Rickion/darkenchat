@@ -21,13 +21,7 @@ function pick(code: 'en' | 'zh') {
     <template #activator="{ props: ap }">
       <v-tooltip :text="t('common.language')" location="bottom">
         <template #activator="{ props: tp }">
-          <v-btn
-            icon="mdi-translate"
-            :size="btnSize"
-            variant="text"
-            class="lang-btn"
-            v-bind="{ ...ap, ...tp }"
-          />
+          <v-btn icon="mdi-translate" :size="btnSize" variant="text" class="lang-btn" v-bind="{ ...ap, ...tp }" />
         </template>
       </v-tooltip>
     </template>
@@ -36,8 +30,7 @@ function pick(code: 'en' | 'zh') {
         v-for="l in SUPPORTED_LOCALES"
         :key="l.code"
         :active="locale === l.code"
-        @click="pick(l.code as 'en' | 'zh')"
-      >
+        @click="pick(l.code as 'en' | 'zh')">
         <v-list-item-title>{{ t(l.labelKey) }}</v-list-item-title>
       </v-list-item>
     </v-list>
@@ -45,8 +38,12 @@ function pick(code: 'en' | 'zh') {
 </template>
 
 <style scoped>
-.lang-btn { flex-shrink: 0; }
+.lang-btn {
+  flex-shrink: 0;
+}
 @media (max-width: 480px) {
-  .lang-btn :deep(.v-icon) { font-size: 18px; }
+  .lang-btn :deep(.v-icon) {
+    font-size: 18px;
+  }
 }
 </style>

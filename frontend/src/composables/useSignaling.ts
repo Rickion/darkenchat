@@ -38,7 +38,7 @@ export function useSignaling(onMessage: MessageHandler) {
         resolve()
       }
 
-      socket.onmessage = (e) => {
+      socket.onmessage = e => {
         try {
           const msg: S2C = JSON.parse(e.data)
           if (msg.type === 'ack') {
@@ -46,7 +46,9 @@ export function useSignaling(onMessage: MessageHandler) {
             clearTimeout(hbTimeoutTimer!)
           }
           onMessage(msg)
-        } catch { /* malformed frame */ }
+        } catch {
+          /* malformed frame */
+        }
       }
 
       socket.onerror = () => reject(new Error('WebSocket error'))

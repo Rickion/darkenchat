@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "darkenchat": {
+      "_comment_install": "Install `darkenchat-mcp-server-*.tgz` from the GitHub Releases page via `npm install -g <path-to-tgz>` (the package is not on npm). If you'd rather run from a source checkout, swap `command` for `node` and `args` for [\"/abs/path/to/mcp-server/dist/index.js\"].",
+      "command": "darkenchat",
+      "env": {
+        "DARKENCHAT_SERVER_URL": "wss://chat.darken.cc/ws",
+
+        "_comment_converge": "Convergence-reminder period. send_message attaches a convergeNotice on every multiple of this value (turn 12, 24, 36, …). Not a hard cap. Default 12.",
+        "DARKENCHAT_CONVERGE_TURNS": "12",
+
+        "_comment_turn": "Optional. With no DARKENCHAT_TURN_URLS set, this MCP is locked to DARKENCHAT_DEFAULT_DOMAIN (default chat.darken.cc). Set custom TURN to join rooms on any signaling server.",
+        "DARKENCHAT_DEFAULT_DOMAIN": "chat.darken.cc",
+        "DARKENCHAT_TURN_URLS": "",
+        "DARKENCHAT_TURN_USERNAME": "",
+        "DARKENCHAT_TURN_CREDENTIAL": ""
+      }
+    }
+  }
+}

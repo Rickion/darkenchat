@@ -8,8 +8,8 @@ import { useRoomStore } from '@/stores/room'
 
 const { t } = useI18n()
 const voiceStore = useVoiceStore()
-const msgStore   = useMessagesStore()
-const roomStore  = useRoomStore()
+const msgStore = useMessagesStore()
+const roomStore = useRoomStore()
 
 const props = defineProps<{
   members: MemberInfo[]
@@ -26,7 +26,7 @@ const emit = defineEmits<{
 // Split the member list so humans stack above the divider and AIs below.
 // Within each group we preserve the server-provided order (join order).
 const humans = computed(() => props.members.filter(m => !m.isBot))
-const bots   = computed(() => props.members.filter(m =>  m.isBot))
+const bots = computed(() => props.members.filter(m => m.isBot))
 
 // Live per-bot chat message count, derived from the local message store.
 // `msgStore.add` dedupes by id, so this is stable across catch-up bundles.
@@ -40,7 +40,7 @@ function isOverLimit(botId: string): boolean {
 
 function botTooltip(botId: string): string {
   return t('room_config.turn_count_tooltip', {
-    sent:  botSentCount(botId),
+    sent: botSentCount(botId),
     limit: roomStore.aiTurnLimit > 0 ? String(roomStore.aiTurnLimit) : '∞',
   })
 }
@@ -49,13 +49,11 @@ function botTooltip(botId: string): string {
 <template>
   <div class="member-list">
     <!-- Humans (top) -->
-    <div
-      v-for="m in humans"
-      :key="m.clientId"
-      class="member-item"
-    >
+    <div v-for="m in humans" :key="m.clientId" class="member-item">
       <!-- Chair crown -->
-      <v-icon v-if="m.clientId === chairId" size="15" color="warning" :title="t('room.chairperson')" class="badge-icon">mdi-crown</v-icon>
+      <v-icon v-if="m.clientId === chairId" size="15" color="warning" :title="t('room.chairperson')" class="badge-icon">
+        mdi-crown
+      </v-icon>
       <!-- Online dot -->
       <span v-else class="dot online" />
 
@@ -70,19 +68,25 @@ function botTooltip(botId: string): string {
         size="13"
         color="success"
         class="voice-icon"
-        :title="t('room.in_voice_channel')"
-      >mdi-microphone</v-icon>
+        :title="t('room.in_voice_channel')">
+        mdi-microphone
+      </v-icon>
 
       <!-- Connection type icon -->
       <v-tooltip v-if="m.connType" location="top">
         <template #activator="{ props: tp }">
           <v-icon
             v-bind="tp"
-            :icon="m.connType === 'p2p' ? 'mdi-lan-connect' : m.connType === 'turn' ? 'mdi-shield-lock-outline' : 'mdi-server-network'"
+            :icon="
+              m.connType === 'p2p'
+                ? 'mdi-lan-connect'
+                : m.connType === 'turn'
+                  ? 'mdi-shield-lock-outline'
+                  : 'mdi-server-network'
+            "
             :color="m.connType === 'p2p' ? '#4CAF50' : m.connType === 'turn' ? '#FFC107' : '#FF7043'"
             size="14"
-            class="conn-icon"
-          />
+            class="conn-icon" />
         </template>
         {{ t('conn.' + m.connType) }}
       </v-tooltip>
@@ -96,8 +100,7 @@ function botTooltip(botId: string): string {
         color="error"
         class="kick-btn"
         :title="t('chair.kick_member')"
-        @click.stop="emit('kick', m)"
-      />
+        @click.stop="emit('kick', m)" />
     </div>
 
     <!-- Divider (only shown when at least one AI is in the room) -->
@@ -112,25 +115,19 @@ function botTooltip(botId: string): string {
             size="x-small"
             variant="text"
             class="divider-gear"
-            @click.stop="emit('open-room-config')"
-          />
+            @click.stop="emit('open-room-config')" />
         </template>
       </v-tooltip>
       <span class="divider-line" />
     </div>
 
     <!-- AIs (bottom) -->
-    <div
-      v-for="m in bots"
-      :key="m.clientId"
-      class="member-item"
-    >
+    <div v-for="m in bots" :key="m.clientId" class="member-item">
       <v-icon
         size="15"
         :color="m.clientId === chairId ? 'warning' : 'secondary'"
         class="badge-icon"
-        :title="m.clientId === chairId ? t('room.chairperson') : ''"
-      >
+        :title="m.clientId === chairId ? t('room.chairperson') : ''">
         {{ m.clientId === chairId ? 'mdi-crown' : 'mdi-robot' }}
       </v-icon>
 
@@ -144,8 +141,9 @@ function botTooltip(botId: string): string {
             v-bind="tp"
             class="ai-count"
             :class="{ over: isOverLimit(m.clientId) }"
-            @click.stop="emit('open-room-config')"
-          >(<span>{{ botSentCount(m.clientId) }}</span>/<template v-if="roomStore.aiTurnLimit > 0"><span>{{ roomStore.aiTurnLimit }}</span></template><v-icon v-else size="11" class="infinity-icon">mdi-infinity</v-icon>)</span>
+            @click.stop="emit('open-room-config')">
+            {{ `(${botSentCount(m.clientId)}/${roomStore.aiTurnLimit > 0 ? roomStore.aiTurnLimit : '∞'})` }}
+          </span>
         </template>
       </v-tooltip>
 
@@ -154,11 +152,16 @@ function botTooltip(botId: string): string {
         <template #activator="{ props: tp }">
           <v-icon
             v-bind="tp"
-            :icon="m.connType === 'p2p' ? 'mdi-lan-connect' : m.connType === 'turn' ? 'mdi-shield-lock-outline' : 'mdi-server-network'"
+            :icon="
+              m.connType === 'p2p'
+                ? 'mdi-lan-connect'
+                : m.connType === 'turn'
+                  ? 'mdi-shield-lock-outline'
+                  : 'mdi-server-network'
+            "
             :color="m.connType === 'p2p' ? '#4CAF50' : m.connType === 'turn' ? '#FFC107' : '#FF7043'"
             size="14"
-            class="conn-icon"
-          />
+            class="conn-icon" />
         </template>
         {{ t('conn.' + m.connType) }}
       </v-tooltip>
@@ -184,14 +187,21 @@ function botTooltip(botId: string): string {
   transition: background 0.15s;
   min-height: 36px;
 }
-.member-item:hover { background: #2e2e2e; }
-.badge-icon { flex-shrink: 0; }
+.member-item:hover {
+  background: #2e2e2e;
+}
+.badge-icon {
+  flex-shrink: 0;
+}
 .dot {
-  width: 8px; height: 8px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
-.dot.online { background: var(--dc-teal); }
+.dot.online {
+  background: var(--dc-teal);
+}
 .member-name {
   flex: 1;
   font-size: 0.88rem;
@@ -204,10 +214,21 @@ function botTooltip(botId: string): string {
   color: var(--dc-gray);
   margin-left: 4px;
 }
-.conn-icon { flex-shrink: 0; opacity: 0.8; }
-.voice-icon { flex-shrink: 0; }
-.kick-btn { opacity: 0; transition: opacity 0.15s; margin-left: auto; }
-.member-item:hover .kick-btn { opacity: 1; }
+.conn-icon {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.voice-icon {
+  flex-shrink: 0;
+}
+.kick-btn {
+  opacity: 0;
+  transition: opacity 0.15s;
+  margin-left: auto;
+}
+.member-item:hover .kick-btn {
+  opacity: 1;
+}
 
 /* Humans-vs-AI divider */
 .member-divider {
@@ -230,7 +251,9 @@ function botTooltip(botId: string): string {
   text-transform: uppercase;
   color: var(--dc-gray);
 }
-.divider-gear { flex-shrink: 0; }
+.divider-gear {
+  flex-shrink: 0;
+}
 
 /* Per-bot (sent/limit) counter pill */
 .ai-count {
@@ -245,9 +268,16 @@ function botTooltip(botId: string): string {
   user-select: none;
   padding: 1px 4px;
   border-radius: 4px;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
-.ai-count:hover { background: rgba(255,255,255,0.06); color: var(--dc-text); }
-.ai-count.over  { color: #ef5350; font-weight: 600; }
-.infinity-icon { opacity: 0.85; }
+.ai-count:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--dc-text);
+}
+.ai-count.over {
+  color: #ef5350;
+  font-weight: 600;
+}
 </style>

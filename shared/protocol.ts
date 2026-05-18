@@ -1,6 +1,13 @@
 // Signaling protocol shared between the browser, MCP server, and signaling
 // server. Anything that goes over the WebSocket lives here so the type
 // constraint is enforced on both ends of the wire.
+//
+// Bump PROTOCOL_VERSION on any breaking change to message shapes. Clients
+// send it on `join`; the server rejects mismatches with `protocol_version_mismatch`
+// so a stale client gets a clear "please upgrade" error instead of silently
+// drifting into an incompatible state. Non-breaking additions (new optional
+// fields, new message types old peers can ignore) do NOT require a bump.
+export const PROTOCOL_VERSION = 1
 
 export interface MemberInfo {
   clientId: string
@@ -21,7 +28,7 @@ export interface RTCSignal {
 
 // ─── Client → Server ────────────────────────────────────────
 export type C2S =
-  | { type: 'join';            roomKey: string; nickname: string; isBot?: boolean; lastClientId?: string }
+  | { type: 'join';            roomKey: string; nickname: string; isBot?: boolean; lastClientId?: string; protocolVersion?: number }
   | { type: 'leave';           roomKey: string }
   | { type: 'signal';          roomKey: string; to: string; payload: RTCSignal }
   | { type: 'score';           roomKey: string; score: number }

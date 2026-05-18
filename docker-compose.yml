@@ -25,9 +25,11 @@ services:
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
 
       # Built-in Metered.ca TURN provider (optional):
-      #   Get API URL from https://dashboard.metered.ca/
+      #   Get API key + subdomain from https://dashboard.metered.ca/
       TURN_METERED_ENABLED: ${TURN_METERED_ENABLED:-false}
-      TURN_METERED_API: ${TURN_METERED_API:-}
+      TURN_METERED_API_KEY: ${TURN_METERED_API_KEY:-}
+      TURN_METERED_DOMAIN:  ${TURN_METERED_DOMAIN:-}
+      TURN_METERED_TTL:     ${TURN_METERED_TTL:-7200}
       # ───────────────────────────────────────────────────────────────────
 
     # volumes:

@@ -6,9 +6,4 @@ import router from './plugins/router'
 import App from './App.vue'
 import './style.css'
 
-createApp(App)
-  .use(createPinia())
-  .use(vuetify)
-  .use(i18n)
-  .use(router)
-  .mount('#app')
+createApp(App).use(createPinia()).use(vuetify).use(i18n).use(router).mount('#app')

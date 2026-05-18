@@ -6,8 +6,8 @@ export type FileStatus = 'idle' | 'downloading' | 'done' | 'error'
 export interface IncomingFileState {
   name: string
   mime: string
-  total: number       // total bytes
-  received: number    // bytes received so far
+  total: number // total bytes
+  received: number // bytes received so far
   chunks: ArrayBuffer[]
   ownerId: string
 }
@@ -25,7 +25,7 @@ export const useFilesStore = defineStore('files', () => {
   // Reactive progress state for files I'm currently downloading.
   const incoming = reactive(new Map<string, IncomingFileState>())
   // Per-fileId status; surfaced to UI so MessageItem can show progress / state.
-  const status   = reactive(new Map<string, FileStatus>())
+  const status = reactive(new Map<string, FileStatus>())
   // blob: object URLs for fetched files — inline media (image/audio/video) or a
   // generic file fetched into memory and ready to save without a re-request.
   const objectUrls = reactive(new Map<string, string>())
@@ -50,7 +50,7 @@ export const useFilesStore = defineStore('files', () => {
     inc.received += chunk.byteLength
   }
 
-  function completeIncoming(fileId: string): { blob: Blob, name: string } | null {
+  function completeIncoming(fileId: string): { blob: Blob; name: string } | null {
     const inc = incoming.get(fileId)
     if (!inc) return null
     const blob = new Blob(inc.chunks, { type: inc.mime })
@@ -96,9 +96,19 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   return {
-    incoming, status, objectUrls,
-    setOutgoing, getOutgoing,
-    startIncoming, appendIncoming, completeIncoming, failIncoming,
-    setStatus, setFetchMode, getFetchMode, setObjectUrl, clearAll,
+    incoming,
+    status,
+    objectUrls,
+    setOutgoing,
+    getOutgoing,
+    startIncoming,
+    appendIncoming,
+    completeIncoming,
+    failIncoming,
+    setStatus,
+    setFetchMode,
+    getFetchMode,
+    setObjectUrl,
+    clearAll,
   }
 })

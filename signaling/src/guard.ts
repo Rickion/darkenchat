@@ -7,18 +7,21 @@ const log: SwitchLog[] = []
 const ipProbes = new Map<string, number[]>()
 
 // Banned IPs and Keys: set of strings
-export const bannedIPs  = new Set<string>()
+export const bannedIPs = new Set<string>()
 export const bannedKeys = new Set<string>()
 
 interface RateLimitConfig {
   windowSeconds: number
-  maxKeyProbes:  number
+  maxKeyProbes: number
   banDurationSeconds: number
   switchLogMaxEntries: number
 }
 
 let cfg: RateLimitConfig = {
-  windowSeconds: 60, maxKeyProbes: 10, banDurationSeconds: 3600, switchLogMaxEntries: 1000,
+  windowSeconds: 60,
+  maxKeyProbes: 10,
+  banDurationSeconds: 3600,
+  switchLogMaxEntries: 1000,
 }
 
 export function configure(c: RateLimitConfig) {
@@ -61,12 +64,18 @@ function pushLog(entry: SwitchLog) {
   log.push(entry)
 }
 
-export function getLogs(): SwitchLog[]  { return [...log].reverse() }
+export function getLogs(): SwitchLog[] {
+  return [...log].reverse()
+}
 export function getBanList() {
   return [
     ...[...bannedIPs].map(v => ({ type: 'ip', value: v })),
     ...[...bannedKeys].map(v => ({ type: 'key', value: v })),
   ]
 }
-export function unbanIP(ip: string)   { bannedIPs.delete(ip) }
-export function unbanKey(key: string) { bannedKeys.delete(key) }
+export function unbanIP(ip: string) {
+  bannedIPs.delete(ip)
+}
+export function unbanKey(key: string) {
+  bannedKeys.delete(key)
+}

@@ -18,7 +18,7 @@ const props = defineProps<{
   failed?: boolean
   catchup?: boolean
   reconnecting?: boolean
-  showHeader?: boolean  // false when same sender sent prev msg within same minute
+  showHeader?: boolean // false when same sender sent prev msg within same minute
 }>()
 
 const emit = defineEmits<{
@@ -34,7 +34,7 @@ const expanded = ref(false)
 const filesStore = useFilesStore()
 const voiceStore = useVoiceStore()
 
-const time   = computed(() => dayjs(props.message.timestamp).format('HH:mm'))
+const time = computed(() => dayjs(props.message.timestamp).format('HH:mm'))
 const isMine = computed(() => props.message.fromId === props.clientId)
 
 // ─── Mention highlighting ─────────────────────────────────
@@ -49,31 +49,29 @@ const isMine = computed(() => props.message.fromId === props.clientId)
 function highlightMentions(html: string): string {
   // Match the full chip element so we can rewrite its inner text too.
   // Mention chips are atomic <span class="mention" data-mention-id="…">@Label</span>.
-  return html.replace(
-    /<span\s+([^>]*?)>([^<]*)<\/span>/g,
-    (full, attrs: string, inner: string) => {
-      if (!/class="[^"]*\bmention\b/.test(attrs)) return full
-      const idMatch = attrs.match(/data-mention-id="([^"]*)"/)
-      if (!idMatch) return full
-      const targetId = idMatch[1]
-      const isAll   = targetId === MENTION_ALL_ID
-      const isAllAi = targetId === MENTION_ALL_AI_ID
-      const isSelf  = !!props.clientId && targetId === props.clientId
-      let newAttrs = attrs
-      const addClass = (cls: string) => {
-        newAttrs = newAttrs.replace(/class="([^"]*)"/, (_m: string, c: string) =>
-          `class="${c.includes(cls) ? c : c + ' ' + cls}"`,
-        )
-      }
-      if (isAll || isAllAi) addClass('mention-all')
-      if (isSelf) addClass('mention-self')
-      let newInner = inner
-      // Re-localise the @everyone / @all-AI labels to the viewer's locale.
-      if (isAll)        newInner = '@' + t('room.mention_all')
-      else if (isAllAi) newInner = '@' + t('room.mention_all_ai')
-      return `<span ${newAttrs}>${newInner}</span>`
-    },
-  )
+  return html.replace(/<span\s+([^>]*?)>([^<]*)<\/span>/g, (full, attrs: string, inner: string) => {
+    if (!/class="[^"]*\bmention\b/.test(attrs)) return full
+    const idMatch = attrs.match(/data-mention-id="([^"]*)"/)
+    if (!idMatch) return full
+    const targetId = idMatch[1]
+    const isAll = targetId === MENTION_ALL_ID
+    const isAllAi = targetId === MENTION_ALL_AI_ID
+    const isSelf = !!props.clientId && targetId === props.clientId
+    let newAttrs = attrs
+    const addClass = (cls: string) => {
+      newAttrs = newAttrs.replace(
+        /class="([^"]*)"/,
+        (_m: string, c: string) => `class="${c.includes(cls) ? c : c + ' ' + cls}"`,
+      )
+    }
+    if (isAll || isAllAi) addClass('mention-all')
+    if (isSelf) addClass('mention-self')
+    let newInner = inner
+    // Re-localise the @everyone / @all-AI labels to the viewer's locale.
+    if (isAll) newInner = '@' + t('room.mention_all')
+    else if (isAllAi) newInner = '@' + t('room.mention_all_ai')
+    return `<span ${newAttrs}>${newInner}</span>`
+  })
 }
 const renderedContent = computed(() => highlightMentions(props.message.content))
 const renderedForwardMsgs = computed(() => {
@@ -100,7 +98,9 @@ const sysMessageKey = computed(() => {
   try {
     const { key } = JSON.parse(props.message.content)
     return key ?? ''
-  } catch { return '' }
+  } catch {
+    return ''
+  }
 })
 
 // ─── Voice bubble ─────────────────────────────────────────
@@ -118,7 +118,7 @@ const voiceParticipantsLabel = computed(() => {
 const voiceDurationLabel = computed(() => {
   const meta = voiceMeta.value
   if (!meta) return ''
-  const ms = meta.durationMs ?? ((meta.endedAt ?? Date.now()) - meta.startedAt)
+  const ms = meta.durationMs ?? (meta.endedAt ?? Date.now()) - meta.startedAt
   const totalSec = Math.max(0, Math.floor(ms / 1000))
   const h = Math.floor(totalSec / 3600)
   const m = Math.floor((totalSec % 3600) / 60)
@@ -178,11 +178,9 @@ function fwdVoiceText(m: Message): string {
 
 // File-message state
 const fileMeta = computed<FileMeta | null>(() =>
-  props.message.type === 'file' && props.message.meta
-    ? (props.message.meta as unknown as FileMeta)
-    : null,
+  props.message.type === 'file' && props.message.meta ? (props.message.meta as unknown as FileMeta) : null,
 )
-const fileStatus = computed(() => fileMeta.value ? filesStore.status.get(fileMeta.value.fileId) : undefined)
+const fileStatus = computed(() => (fileMeta.value ? filesStore.status.get(fileMeta.value.fileId) : undefined))
 const fileProgress = computed(() => {
   if (!fileMeta.value) return null
   const inc = filesStore.incoming.get(fileMeta.value.fileId)
@@ -196,22 +194,22 @@ function fmtSize(bytes: number): string {
 }
 
 // ─── Attachment kind / inline-media state ─────────────────
-const fileMime    = computed(() => fileMeta.value?.mime ?? '')
-const isImage     = computed(() => fileMime.value.startsWith('image/'))
-const isAudio     = computed(() => fileMime.value.startsWith('audio/'))
-const isVideo     = computed(() => fileMime.value.startsWith('video/'))
-const isMedia     = computed(() => isImage.value || isAudio.value || isVideo.value)
+const fileMime = computed(() => fileMeta.value?.mime ?? '')
+const isImage = computed(() => fileMime.value.startsWith('image/'))
+const isAudio = computed(() => fileMime.value.startsWith('audio/'))
+const isVideo = computed(() => fileMime.value.startsWith('video/'))
+const isMedia = computed(() => isImage.value || isAudio.value || isVideo.value)
 const isLargeFile = computed(() => (fileMeta.value?.size ?? 0) >= AUTO_FETCH_SIZE)
 // Object URL for the fetched blob — present once the file has been fetched
 // (auto for small files, on click for large ones) or for the sender's own file.
-const objectUrl = computed(() => fileMeta.value ? filesStore.objectUrls.get(fileMeta.value.fileId) : undefined)
+const objectUrl = computed(() => (fileMeta.value ? filesStore.objectUrls.get(fileMeta.value.fileId) : undefined))
 // Media renders inline only once its blob URL is available.
-const mediaUrl  = computed(() => isMedia.value ? objectUrl.value : undefined)
+const mediaUrl = computed(() => (isMedia.value ? objectUrl.value : undefined))
 
 const fileCardIcon = computed(() => {
   if (fileStatus.value === 'downloading') return 'mdi-progress-download'
-  if (fileStatus.value === 'error')       return 'mdi-file-alert-outline'
-  if (objectUrl.value)                    return 'mdi-file-check-outline'
+  if (fileStatus.value === 'error') return 'mdi-file-alert-outline'
+  if (objectUrl.value) return 'mdi-file-check-outline'
   if (isImage.value) return 'mdi-image-outline'
   if (isVideo.value) return 'mdi-video-outline'
   if (isAudio.value) return 'mdi-music-note-outline'
@@ -220,11 +218,11 @@ const fileCardIcon = computed(() => {
 
 const fileActionLabel = computed(() => {
   if (fileStatus.value === 'downloading') return ''
-  if (fileStatus.value === 'error')       return t('file.error')
+  if (fileStatus.value === 'error') return t('file.error')
   // Fetched into memory and ready to save without a re-request.
-  if (objectUrl.value)                    return t('file.click_to_save')
+  if (objectUrl.value) return t('file.click_to_save')
   // A save-mode download already completed.
-  if (fileStatus.value === 'done')        return t('file.saved')
+  if (fileStatus.value === 'done') return t('file.saved')
   // Large media isn't auto-fetched — offer to load the preview.
   if (isMedia.value && isLargeFile.value) return t('file.click_to_fetch')
   return t('file.click_to_download')
@@ -246,8 +244,7 @@ function onFileCardClick() {
     v-if="message.type === 'voice' && voiceMeta"
     class="chat-row voice-row"
     :class="{ 'select-mode': selectMode }"
-    @click="selectMode && emit('toggle', message.id)"
-  >
+    @click="selectMode && emit('toggle', message.id)">
     <div class="msg-meta">
       <span class="msg-from sys-from">{{ t('voice.system_label') }}</span>
       <span class="msg-time">{{ time }}</span>
@@ -258,8 +255,7 @@ function onFileCardClick() {
         ended: voiceMeta.voiceKind === 'summary' || !!voiceMeta.endedAt,
         'catchup-flash': catchup,
         'select-mode': selectMode,
-      }"
-    >
+      }">
       <v-checkbox
         v-if="selectMode"
         :model-value="selected"
@@ -267,8 +263,7 @@ function onFileCardClick() {
         density="compact"
         class="select-cb"
         @click.stop
-        @update:model-value="emit('toggle', message.id)"
-      />
+        @update:model-value="emit('toggle', message.id)" />
       <div class="voice-bubble-body">
         <template v-if="voiceMeta.voiceKind === 'session'">
           <v-icon size="18" :color="voiceMeta.endedAt ? 'grey' : 'success'" class="voice-icon">mdi-phone</v-icon>
@@ -284,11 +279,13 @@ function onFileCardClick() {
           <div class="voice-bubble-text">
             <div class="voice-bubble-title">{{ t('voice.summary_title') }}</div>
             <div class="voice-bubble-meta">
-              {{ t('voice.summary_line', {
-                duration: voiceDurationLabel,
-                names: voiceParticipantsLabel,
-                endedAt: voiceEndedTime,
-              }) }}
+              {{
+                t('voice.summary_line', {
+                  duration: voiceDurationLabel,
+                  names: voiceParticipantsLabel,
+                  endedAt: voiceEndedTime,
+                })
+              }}
             </div>
           </div>
         </template>
@@ -300,8 +297,7 @@ function onFileCardClick() {
         color="success"
         variant="tonal"
         :title="t('voice.join_session')"
-        @click.stop="onJoinVoice"
-      />
+        @click.stop="onJoinVoice" />
     </div>
   </div>
 
@@ -318,8 +314,7 @@ function onFileCardClick() {
       density="comfortable"
       class="sys-action-btn"
       :title="t('room_config.gear_tooltip')"
-      @click.stop="emit('open-room-config')"
-    />
+      @click.stop="emit('open-room-config')" />
     · {{ time }}
   </div>
 
@@ -335,8 +330,7 @@ function onFileCardClick() {
     <div
       v-if="mediaUrl"
       class="chat-msg media-msg"
-      :class="{ mine: isMine, 'catchup-flash': catchup, 'no-header': showHeader === false }"
-    >
+      :class="{ mine: isMine, 'catchup-flash': catchup, 'no-header': showHeader === false }">
       <img v-if="isImage" :src="mediaUrl" :alt="fileMeta.name" class="media-img" />
       <audio v-else-if="isAudio" :src="mediaUrl" controls class="media-audio" />
       <video v-else-if="isVideo" :src="mediaUrl" controls playsinline class="media-video" />
@@ -347,15 +341,14 @@ function onFileCardClick() {
       v-else
       class="chat-msg file-msg"
       :class="{ mine: isMine, 'catchup-flash': catchup, 'no-header': showHeader === false }"
-      @click="onFileCardClick"
-    >
+      @click="onFileCardClick">
       <v-icon class="file-icon" size="22">{{ fileCardIcon }}</v-icon>
       <div class="file-body">
         <div class="file-name">{{ fileMeta.name }}</div>
         <div class="file-sub">
           <span>{{ fmtSize(fileMeta.size) }}</span>
-          <span v-if="fileStatus === 'downloading' && fileProgress !== null"> · {{ fileProgress }}%</span>
-          <span v-else-if="fileActionLabel"> · {{ fileActionLabel }}</span>
+          <span v-if="fileStatus === 'downloading' && fileProgress !== null">· {{ fileProgress }}%</span>
+          <span v-else-if="fileActionLabel">· {{ fileActionLabel }}</span>
         </div>
         <div v-if="fileStatus === 'downloading' && fileProgress !== null" class="file-bar">
           <div class="file-bar-fill" :style="{ width: fileProgress + '%' }" />
@@ -405,8 +398,7 @@ function onFileCardClick() {
         'select-mode': selectMode,
         'catchup-flash': catchup,
         'no-header': showHeader === false,
-      }"
-    >
+      }">
       <v-checkbox
         v-if="selectMode"
         :model-value="selected"
@@ -414,8 +406,7 @@ function onFileCardClick() {
         density="compact"
         class="select-cb"
         @click.stop
-        @update:model-value="emit('toggle', message.id)"
-      />
+        @update:model-value="emit('toggle', message.id)" />
       <div class="msg-content" v-html="renderedContent" />
     </div>
   </div>
@@ -446,10 +437,21 @@ function onFileCardClick() {
   margin-bottom: 2px;
   padding: 0 4px;
 }
-.chat-row.mine .msg-meta { flex-direction: row-reverse; }
-.msg-from { font-size: 0.75rem; font-weight: 600; color: var(--dc-gold); }
-.chat-row.mine .msg-from { color: var(--dc-gray); }
-.msg-time { font-size: 0.68rem; color: var(--dc-gray); }
+.chat-row.mine .msg-meta {
+  flex-direction: row-reverse;
+}
+.msg-from {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--dc-gold);
+}
+.chat-row.mine .msg-from {
+  color: var(--dc-gray);
+}
+.msg-time {
+  font-size: 0.68rem;
+  color: var(--dc-gray);
+}
 
 /* ── Chat bubble (message content only) ── */
 .chat-msg {
@@ -469,26 +471,59 @@ function onFileCardClick() {
   background: var(--dc-panel);
   border-bottom-left-radius: 4px;
 }
-.chat-msg.select-mode { cursor: pointer; }
-.chat-msg.select-mode:hover { filter: brightness(1.2); }
-.chat-msg.mine.select-mode:hover { filter: brightness(0.95); }
-.chat-msg.no-header { padding-top: 4px; }
+.chat-msg.select-mode {
+  cursor: pointer;
+}
+.chat-msg.select-mode:hover {
+  filter: brightness(1.2);
+}
+.chat-msg.mine.select-mode:hover {
+  filter: brightness(0.95);
+}
+.chat-msg.no-header {
+  padding-top: 4px;
+}
 
-.msg-body { flex: 1; min-width: 0; }
+.msg-body {
+  flex: 1;
+  min-width: 0;
+}
 .msg-content {
   font-size: 0.92rem;
   line-height: 1.5;
   word-break: break-word;
 }
-.chat-msg.mine .msg-content { color: #1A1A1A; }
-.chat-msg:not(.mine) .msg-content { color: var(--dc-text); }
-.msg-content :deep(strong) { color: inherit; font-weight: 700; }
-.msg-content :deep(em) { font-style: italic; }
-.msg-content :deep(u) { text-decoration: underline; }
-.msg-content :deep(s) { text-decoration: line-through; }
-.msg-content :deep(a) { color: var(--dc-blue); text-underline-offset: 3px; }
-.chat-msg.mine .msg-content :deep(a) { color: #1A1A1A; text-decoration: underline; }
-.msg-content :deep(img) { max-width: min(280px, 100%); border-radius: 8px; }
+.chat-msg.mine .msg-content {
+  color: #1a1a1a;
+}
+.chat-msg:not(.mine) .msg-content {
+  color: var(--dc-text);
+}
+.msg-content :deep(strong) {
+  color: inherit;
+  font-weight: 700;
+}
+.msg-content :deep(em) {
+  font-style: italic;
+}
+.msg-content :deep(u) {
+  text-decoration: underline;
+}
+.msg-content :deep(s) {
+  text-decoration: line-through;
+}
+.msg-content :deep(a) {
+  color: var(--dc-blue);
+  text-underline-offset: 3px;
+}
+.chat-msg.mine .msg-content :deep(a) {
+  color: #1a1a1a;
+  text-decoration: underline;
+}
+.msg-content :deep(img) {
+  max-width: min(280px, 100%);
+  border-radius: 8px;
+}
 /* Inline code */
 .msg-content :deep(code) {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
@@ -500,7 +535,7 @@ function onFileCardClick() {
 }
 .chat-msg.mine .msg-content :deep(code) {
   background: rgba(0, 0, 0, 0.18);
-  color: #1A1A1A;
+  color: #1a1a1a;
 }
 /* Code block */
 .msg-content :deep(pre) {
@@ -519,19 +554,29 @@ function onFileCardClick() {
 }
 .chat-msg.mine .msg-content :deep(pre) {
   background: rgba(0, 0, 0, 0.22);
-  color: #1A1A1A;
+  color: #1a1a1a;
 }
-.chat-msg.mine .msg-content :deep(pre) code { color: #1A1A1A; }
+.chat-msg.mine .msg-content :deep(pre) code {
+  color: #1a1a1a;
+}
 /* Lists */
 .msg-content :deep(ul),
 .msg-content :deep(ol) {
   padding-left: 22px;
   margin: 2px 0;
 }
-.msg-content :deep(ul) { list-style: disc outside; }
-.msg-content :deep(ol) { list-style: decimal outside; }
-.msg-content :deep(li) { margin: 1px 0; }
-.msg-content :deep(li > p) { margin: 0; }
+.msg-content :deep(ul) {
+  list-style: disc outside;
+}
+.msg-content :deep(ol) {
+  list-style: decimal outside;
+}
+.msg-content :deep(li) {
+  margin: 1px 0;
+}
+.msg-content :deep(li > p) {
+  margin: 0;
+}
 /* Blockquote */
 .msg-content :deep(blockquote) {
   border-left: 3px solid var(--dc-gold);
@@ -540,18 +585,36 @@ function onFileCardClick() {
   color: inherit;
   opacity: 0.92;
 }
-.chat-msg.mine .msg-content :deep(blockquote) { border-left-color: #1A1A1A; }
-.msg-content :deep(p) { margin: 2px 0; }
-.msg-content :deep(p:first-child) { margin-top: 0; }
-.msg-content :deep(p:last-child) { margin-bottom: 0; }
+.chat-msg.mine .msg-content :deep(blockquote) {
+  border-left-color: #1a1a1a;
+}
+.msg-content :deep(p) {
+  margin: 2px 0;
+}
+.msg-content :deep(p:first-child) {
+  margin-top: 0;
+}
+.msg-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
 
 /* ── Catch-up flash ── */
 @keyframes catchup-flash {
-  0%         { background: transparent; }
-  10%, 40%   { background: rgba(201, 168, 76, 0.22); }
-  70%, 100%  { background: transparent; }
+  0% {
+    background: transparent;
+  }
+  10%,
+  40% {
+    background: rgba(201, 168, 76, 0.22);
+  }
+  70%,
+  100% {
+    background: transparent;
+  }
 }
-.catchup-flash { animation: catchup-flash 3s ease-out 1; }
+.catchup-flash {
+  animation: catchup-flash 3s ease-out 1;
+}
 
 /* ── Forward card ── */
 .forward-card {
@@ -571,8 +634,12 @@ function onFileCardClick() {
   color: var(--dc-blue);
   user-select: none;
 }
-.forward-header:hover { background: #2a2a2a; }
-.forward-body { padding: 0 14px 12px; }
+.forward-header:hover {
+  background: #2a2a2a;
+}
+.forward-body {
+  padding: 0 14px 12px;
+}
 .forward-note {
   font-size: 0.8rem;
   color: var(--dc-gray);
@@ -587,16 +654,47 @@ function onFileCardClick() {
   padding: 3px 0;
   font-size: 0.83rem;
 }
-.fwd-from { font-weight: 600; flex-shrink: 0; color: var(--dc-text); }
-.fwd-time { color: var(--dc-gray); flex-shrink: 0; font-size: 0.72rem; }
-.fwd-content { flex: 1; word-break: break-word; }
-.forward-title { display: inline-flex; align-items: center; }
-.bot-badge { vertical-align: middle; opacity: 0.85; }
+.fwd-from {
+  font-weight: 600;
+  flex-shrink: 0;
+  color: var(--dc-text);
+}
+.fwd-time {
+  color: var(--dc-gray);
+  flex-shrink: 0;
+  font-size: 0.72rem;
+}
+.fwd-content {
+  flex: 1;
+  word-break: break-word;
+}
+.forward-title {
+  display: inline-flex;
+  align-items: center;
+}
+.bot-badge {
+  vertical-align: middle;
+  opacity: 0.85;
+}
 
 /* Accordion */
-.accordion-enter-active, .accordion-leave-active { transition: max-height 0.2s ease, opacity 0.2s; overflow: hidden; }
-.accordion-enter-from, .accordion-leave-to { max-height: 0; opacity: 0; }
-.accordion-enter-to, .accordion-leave-from { max-height: 800px; opacity: 1; }
+.accordion-enter-active,
+.accordion-leave-active {
+  transition:
+    max-height 0.2s ease,
+    opacity 0.2s;
+  overflow: hidden;
+}
+.accordion-enter-from,
+.accordion-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+.accordion-enter-to,
+.accordion-leave-from {
+  max-height: 800px;
+  opacity: 1;
+}
 
 /* File card */
 .file-msg {
@@ -605,39 +703,60 @@ function onFileCardClick() {
   max-width: 320px;
   align-items: center;
 }
-.file-msg:hover { filter: brightness(1.08); }
-.chat-msg.file-msg.mine:hover { filter: brightness(0.95); }
-.file-icon { flex-shrink: 0; }
-.chat-msg.file-msg.mine .file-icon { color: #1A1A1A; }
-.file-body { flex: 1; min-width: 0; }
+.file-msg:hover {
+  filter: brightness(1.08);
+}
+.chat-msg.file-msg.mine:hover {
+  filter: brightness(0.95);
+}
+.file-icon {
+  flex-shrink: 0;
+}
+.chat-msg.file-msg.mine .file-icon {
+  color: #1a1a1a;
+}
+.file-body {
+  flex: 1;
+  min-width: 0;
+}
 .file-name {
   font-size: 0.9rem;
   font-weight: 600;
   word-break: break-all;
   line-height: 1.3;
 }
-.chat-msg.file-msg.mine .file-name { color: #1A1A1A; }
-.chat-msg.file-msg:not(.mine) .file-name { color: var(--dc-text); }
+.chat-msg.file-msg.mine .file-name {
+  color: #1a1a1a;
+}
+.chat-msg.file-msg:not(.mine) .file-name {
+  color: var(--dc-text);
+}
 .file-sub {
   font-size: 0.74rem;
   color: var(--dc-gray);
   margin-top: 2px;
 }
-.chat-msg.file-msg.mine .file-sub { color: #444; }
+.chat-msg.file-msg.mine .file-sub {
+  color: #444;
+}
 .file-bar {
   margin-top: 4px;
   height: 3px;
-  background: rgba(255,255,255,0.15);
+  background: rgba(255, 255, 255, 0.15);
   border-radius: 2px;
   overflow: hidden;
 }
-.chat-msg.file-msg.mine .file-bar { background: rgba(0,0,0,0.18); }
+.chat-msg.file-msg.mine .file-bar {
+  background: rgba(0, 0, 0, 0.18);
+}
 .file-bar-fill {
   height: 100%;
   background: var(--dc-gold);
   transition: width 0.15s linear;
 }
-.chat-msg.file-msg.mine .file-bar-fill { background: #1A1A1A; }
+.chat-msg.file-msg.mine .file-bar-fill {
+  background: #1a1a1a;
+}
 
 /* Inline media attachment (image / audio / video) */
 .chat-msg.media-msg {
@@ -647,7 +766,9 @@ function onFileCardClick() {
   background: var(--dc-panel);
   max-width: min(320px, 100%);
 }
-.chat-msg.media-msg.mine { background: var(--dc-gold); }
+.chat-msg.media-msg.mine {
+  background: var(--dc-gold);
+}
 .media-img,
 .media-video {
   display: block;
@@ -655,7 +776,9 @@ function onFileCardClick() {
   max-height: 320px;
   border-radius: 12px;
 }
-.media-img { object-fit: contain; }
+.media-img {
+  object-fit: contain;
+}
 .media-audio {
   display: block;
   width: 260px;
@@ -668,11 +791,17 @@ function onFileCardClick() {
   margin: 0 2px;
   opacity: 0.85;
 }
-.sys-action-btn:hover { opacity: 1; }
+.sys-action-btn:hover {
+  opacity: 1;
+}
 
 /* Voice bubble rendered inside a normal left-aligned chat row (system sender) */
-.voice-row { max-width: 85%; }
-.sys-from { color: var(--dc-gold); }
+.voice-row {
+  max-width: 85%;
+}
+.sys-from {
+  color: var(--dc-gold);
+}
 .chat-msg.voice-msg {
   display: flex;
   align-items: center;
@@ -692,14 +821,19 @@ function onFileCardClick() {
   flex: 1;
   min-width: 0;
 }
-.voice-bubble-text { min-width: 0; flex: 1; }
+.voice-bubble-text {
+  min-width: 0;
+  flex: 1;
+}
 .voice-bubble-title {
   font-weight: 600;
   letter-spacing: 0.02em;
   font-size: 0.86rem;
   color: var(--dc-gold);
 }
-.chat-msg.voice-msg.ended .voice-bubble-title { color: var(--dc-gray); }
+.chat-msg.voice-msg.ended .voice-bubble-title {
+  color: var(--dc-gray);
+}
 .voice-bubble-names {
   margin-top: 2px;
   font-size: 0.82rem;
@@ -712,5 +846,7 @@ function onFileCardClick() {
   color: var(--dc-gray);
   word-break: break-word;
 }
-.voice-icon { flex-shrink: 0; }
+.voice-icon {
+  flex-shrink: 0;
+}
 </style>

@@ -8,7 +8,9 @@ function detectInitialLocale(): 'en' | 'zh' {
   try {
     const saved = localStorage.getItem(LOCALE_KEY)
     if (saved === 'en' || saved === 'zh') return saved
-  } catch { /* storage unavailable */ }
+  } catch {
+    /* storage unavailable */
+  }
   const nav = typeof navigator !== 'undefined' ? navigator.language || '' : ''
   return nav.toLowerCase().startsWith('zh') ? 'zh' : 'en'
 }
@@ -27,5 +29,9 @@ export const SUPPORTED_LOCALES = [
 
 export function setLocale(code: 'en' | 'zh') {
   i18n.global.locale.value = code
-  try { localStorage.setItem(LOCALE_KEY, code) } catch { /* ignore */ }
+  try {
+    localStorage.setItem(LOCALE_KEY, code)
+  } catch {
+    /* ignore */
+  }
 }

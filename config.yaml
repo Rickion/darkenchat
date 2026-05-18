@@ -1,3 +1,10 @@
+# ⚠️  Single-instance only.
+# The signaling server keeps all room/member state in process memory. It
+# does NOT support horizontal scaling — running two or more instances behind
+# a load balancer will silently split the rooms across instances and break
+# every connection that lands on the "wrong" one. Scale vertically (one
+# process, more CPU) or shard by domain.
+
 server:
   host: "0.0.0.0"
   port: 3000

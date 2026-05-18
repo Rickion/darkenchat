@@ -20,28 +20,28 @@
 import type { IncomingMessage, RoomMember } from './room.js'
 
 export interface StructuredFields {
-  round?:         number
-  position?:      string
-  positionNorm?:  string
-  agreeNames:     string[]
-  disagreeNames:  string[]
+  round?: number
+  position?: string
+  positionNorm?: string
+  agreeNames: string[]
+  disagreeNames: string[]
 }
 
 export interface Stance {
-  positionNorm:    string
+  positionNorm: string
   examplePosition: string
-  supporters:      Array<{ clientId: string; nickname: string }>
+  supporters: Array<{ clientId: string; nickname: string }>
 }
 
 export interface Tally {
-  totalAiMembers:     number
-  majorityThreshold:  number   // ceil(N / 2)        — used by yield rule
-  consensusThreshold: number   // ceil(N * 0.75)     — used by auto-CONSENSUS
-  currentRound:       number   // max ROUND seen in any AI's latest message
-  stances:            Stance[] // sorted desc by supporters.length
+  totalAiMembers: number
+  majorityThreshold: number // ceil(N / 2)        — used by yield rule
+  consensusThreshold: number // ceil(N * 0.75)     — used by auto-CONSENSUS
+  currentRound: number // max ROUND seen in any AI's latest message
+  stances: Stance[] // sorted desc by supporters.length
   // Per-AI pressure: how many *other* AIs name them in AGREE_WITH / DISAGREE_WITH
-  pressureFor:        Record<string, number>   // by clientId
-  pressureAgainst:    Record<string, number>   // by clientId
+  pressureFor: Record<string, number> // by clientId
+  pressureAgainst: Record<string, number> // by clientId
 }
 
 const EMPTY_LINE_RE = /^\s*$/
@@ -67,18 +67,34 @@ function extractNames(s: string): string[] {
 /** Parse a message body and return structured fields, or null if no POSITION. */
 export function parseStructured(content: string): StructuredFields | null {
   if (!content) return null
-  let round:    number | undefined
+  let round: number | undefined
   let position: string | undefined
-  let agreeNames:    string[] = []
+  let agreeNames: string[] = []
   let disagreeNames: string[] = []
 
   for (const raw of content.split(/\r?\n/)) {
     const line = raw.trim()
     if (EMPTY_LINE_RE.test(line)) continue
-    const r = line.match(/^ROUND\s*:\s*(\d+)/i);          if (r) { round    = parseInt(r[1], 10); continue }
-    const p = line.match(/^POSITION\s*:\s*(.+)$/i);       if (p) { position = p[1].trim();        continue }
-    const a = line.match(/^AGREE_WITH\s*:\s*(.+)$/i);     if (a) { agreeNames    = extractNames(a[1]); continue }
-    const d = line.match(/^DISAGREE_WITH\s*:\s*(.+)$/i);  if (d) { disagreeNames = extractNames(d[1]); continue }
+    const r = line.match(/^ROUND\s*:\s*(\d+)/i)
+    if (r) {
+      round = parseInt(r[1], 10)
+      continue
+    }
+    const p = line.match(/^POSITION\s*:\s*(.+)$/i)
+    if (p) {
+      position = p[1].trim()
+      continue
+    }
+    const a = line.match(/^AGREE_WITH\s*:\s*(.+)$/i)
+    if (a) {
+      agreeNames = extractNames(a[1])
+      continue
+    }
+    const d = line.match(/^DISAGREE_WITH\s*:\s*(.+)$/i)
+    if (d) {
+      disagreeNames = extractNames(d[1])
+      continue
+    }
     // First non-header line ends the header block.
     if (position !== undefined) break
   }
@@ -127,19 +143,29 @@ export function computeTally(history: IncomingMessage[], members: RoomMember[]):
   }
 
   // Compute pressure (each voter contributes once per target)
-  const pressureFor:     Record<string, number> = {}
+  const pressureFor: Record<string, number> = {}
   const pressureAgainst: Record<string, number> = {}
-  for (const b of bots) { pressureFor[b.clientId] = 0; pressureAgainst[b.clientId] = 0 }
+  for (const b of bots) {
+    pressureFor[b.clientId] = 0
+    pressureAgainst[b.clientId] = 0
+  }
 
   for (const [voterId, fields] of latest) {
-    const seenFor = new Set<string>(), seenAgainst = new Set<string>()
+    const seenFor = new Set<string>(),
+      seenAgainst = new Set<string>()
     for (const name of fields.agreeNames) {
       const tid = nickToId.get(name.toLowerCase())
-      if (tid && tid !== voterId && !seenFor.has(tid)) { pressureFor[tid] = (pressureFor[tid] ?? 0) + 1; seenFor.add(tid) }
+      if (tid && tid !== voterId && !seenFor.has(tid)) {
+        pressureFor[tid] = (pressureFor[tid] ?? 0) + 1
+        seenFor.add(tid)
+      }
     }
     for (const name of fields.disagreeNames) {
       const tid = nickToId.get(name.toLowerCase())
-      if (tid && tid !== voterId && !seenAgainst.has(tid)) { pressureAgainst[tid] = (pressureAgainst[tid] ?? 0) + 1; seenAgainst.add(tid) }
+      if (tid && tid !== voterId && !seenAgainst.has(tid)) {
+        pressureAgainst[tid] = (pressureAgainst[tid] ?? 0) + 1
+        seenAgainst.add(tid)
+      }
     }
   }
 
@@ -150,13 +176,13 @@ export function computeTally(history: IncomingMessage[], members: RoomMember[]):
     .map(([positionNorm, g]) => ({
       positionNorm,
       examplePosition: g.example,
-      supporters:      g.supporters.map(m => ({ clientId: m.clientId, nickname: m.nickname })),
+      supporters: g.supporters.map(m => ({ clientId: m.clientId, nickname: m.nickname })),
     }))
     .sort((a, b) => b.supporters.length - a.supporters.length)
 
   return {
-    totalAiMembers:     total,
-    majorityThreshold:  Math.max(1, Math.ceil(total / 2)),
+    totalAiMembers: total,
+    majorityThreshold: Math.max(1, Math.ceil(total / 2)),
     consensusThreshold: Math.max(1, Math.ceil(total * 0.75)),
     currentRound,
     stances,

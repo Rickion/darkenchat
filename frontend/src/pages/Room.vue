@@ -70,25 +70,56 @@ const connStore = useConnectionStore()
 const turnStore = useTurnStore()
 const voiceStore = useVoiceStore()
 
-const { join, leave, sendMessage, sendForward, resendMessage, attachFile, requestFileDownload, requestFileView, startVoiceSession, joinVoiceSession, leaveVoice, toggleMute, confirmRelay, signaling, setAiTurnLimit } = useRoom((e: { event: string }) => {
-  if (e.event === 'kicked')            { showKickedDialog.value = true }
-  if (e.event === 'room_ended')        { showRoomEndedDialog.value = true }
-  if (e.event === 'room_banned')       { showSnackbar(t('error.room_banned'), 'error') }
-  if (e.event === 'connection_failed') { connectionFailed.value = true }
-  if (e.event === 'relay_request')     { showRelayConfirm.value = true }
-  if (e.event === 'mic_denied')        { showSnackbar(t('voice.mic_denied'), 'error', 5000) }
-  if (e.event === 'voice_full')        { showSnackbar(t('voice.full', { max: MAX_VOICE_PARTICIPANTS }), 'warning', 4000) }
+const {
+  join,
+  leave,
+  sendMessage,
+  sendForward,
+  resendMessage,
+  attachFile,
+  requestFileDownload,
+  requestFileView,
+  startVoiceSession,
+  joinVoiceSession,
+  leaveVoice,
+  toggleMute,
+  confirmRelay,
+  signaling,
+  setAiTurnLimit,
+} = useRoom((e: { event: string }) => {
+  if (e.event === 'kicked') {
+    showKickedDialog.value = true
+  }
+  if (e.event === 'room_ended') {
+    showRoomEndedDialog.value = true
+  }
+  if (e.event === 'room_banned') {
+    showSnackbar(t('error.room_banned'), 'error')
+  }
+  if (e.event === 'protocol_mismatch') {
+    showSnackbar(t('error.protocol_mismatch'), 'error', 0)
+  }
+  if (e.event === 'connection_failed') {
+    connectionFailed.value = true
+  }
+  if (e.event === 'relay_request') {
+    showRelayConfirm.value = true
+  }
+  if (e.event === 'mic_denied') {
+    showSnackbar(t('voice.mic_denied'), 'error', 5000)
+  }
+  if (e.event === 'voice_full') {
+    showSnackbar(t('voice.full', { max: MAX_VOICE_PARTICIPANTS }), 'warning', 4000)
+  }
   if (e.event === 'relay_active') {
-    showSnackbar(
-      connStore.techMode ? t('conn.relay_toast_tech') : t('conn.relay_toast'),
-      'warning',
-      6000,
-    )
+    showSnackbar(connStore.techMode ? t('conn.relay_toast_tech') : t('conn.relay_toast'), 'warning', 6000)
   }
   // P2P recovered before the user decided on relay — dismiss the now-stale
   // "use server relay?" dialog and join the room normally. Without this the
   // dialog would just sit there, even though messages are flowing fine.
-  if (e.event === 'p2p_recovered')     { showRelayConfirm.value = false }
+  if (e.event === 'p2p_recovered') {
+    showRelayConfirm.value = false
+  }
 })
 
 // Cancel from the relay confirmation dialog: the user explicitly refuses
@@ -98,6 +129,18 @@ const { join, leave, sendMessage, sendForward, resendMessage, attachFile, reques
 function declineRelay() {
   showRelayConfirm.value = false
   confirmRelay(false)
+  leave()
+  router.push('/')
+}
+
+// Accept-relay + leave-and-go-home are also extracted (rather than written
+// inline in the template) so Prettier doesn't strip the `;` between
+// statements — Vue's template parser does NOT do ASI.
+function acceptRelay() {
+  showRelayConfirm.value = false
+  confirmRelay(true)
+}
+function leaveAndGoHome() {
   leave()
   router.push('/')
 }
@@ -115,9 +158,8 @@ function onToggleVoice() {
 
 // Disables the mic button while someone else is hosting a call I'm not in.
 // While I'm in the call the button stays enabled (it acts as "leave").
-const voiceCtrlDisabled = computed(() =>
-  roomStore.reconnecting ||
-  (!!voiceStore.activeSessionId && !voiceStore.inVoice)
+const voiceCtrlDisabled = computed(
+  () => roomStore.reconnecting || (!!voiceStore.activeSessionId && !voiceStore.inVoice),
 )
 
 function onJoinVoiceFromBubble(sessionId: string) {
@@ -136,11 +178,14 @@ function shouldShowHeader(messages: Message[], index: number): boolean {
 }
 
 // Watch for WebSocket disconnection
-watch(() => signaling.disconnected.value, (disconnected) => {
-  if (disconnected) {
-    showSnackbar(t('error.connection_lost'), 'error', 0)
-  }
-})
+watch(
+  () => signaling.disconnected.value,
+  disconnected => {
+    if (disconnected) {
+      showSnackbar(t('error.connection_lost'), 'error', 0)
+    }
+  },
+)
 
 // ─── Lifecycle ────────────────────────────────────────────
 onMounted(async () => {
@@ -177,7 +222,11 @@ async function doJoin() {
   roomStore.pendingNickname = nick
 
   if (preJoin.value === 'create') {
-    await fetch('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: roomKey.value }) })
+    await fetch('/api/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: roomKey.value }),
+    })
   }
 
   preJoin.value = null
@@ -185,58 +234,76 @@ async function doJoin() {
 }
 
 // ─── Tab title unread badge ───────────────────────────────
-watch(() => msgStore.messages.length, () => {
-  const last = msgStore.messages.at(-1)
-  if (last && last.type === 'chat' && last.fromId !== roomStore.clientId) {
-    const plain = last.content.replace(/<[^>]*>/g, '')
-    notify(last.from, plain)
-  }
-})
+watch(
+  () => msgStore.messages.length,
+  () => {
+    const last = msgStore.messages.at(-1)
+    if (last && last.type === 'chat' && last.fromId !== roomStore.clientId) {
+      const plain = last.content.replace(/<[^>]*>/g, '')
+      notify(last.from, plain)
+    }
+  },
+)
 
 // ─── Auto-scroll ──────────────────────────────────────────
-watch(() => msgStore.messages.length, () => {
-  nextTick(() => {
-    if (msgListEl.value) {
-      msgListEl.value.scrollTop = msgListEl.value.scrollHeight
-    }
-  })
-})
+watch(
+  () => msgStore.messages.length,
+  () => {
+    nextTick(() => {
+      if (msgListEl.value) {
+        msgListEl.value.scrollTop = msgListEl.value.scrollHeight
+      }
+    })
+  },
+)
 
 // ─── Reconnecting snackbar ────────────────────────────────
-watch(() => roomStore.reconnecting, (v) => {
-  if (v) showSnackbar(t('system.reconnecting'), 'warning')
-  else   showSnackbar(t('system.reconnected'), 'success', 3000)
-})
+watch(
+  () => roomStore.reconnecting,
+  v => {
+    if (v) showSnackbar(t('system.reconnecting'), 'warning')
+    else showSnackbar(t('system.reconnected'), 'success', 3000)
+  },
+)
 
 // ─── TURN toast: show once when state changes to 'turn' ──
-watch(() => connStore.state, (newState, oldState) => {
-  if (newState === 'turn' && oldState !== 'turn') {
-    showSnackbar(
-      connStore.techMode ? t('conn.turn_toast_tech') : t('conn.turn_toast'),
-      'info',
-      6000,
-    )
-  }
-})
+watch(
+  () => connStore.state,
+  (newState, oldState) => {
+    if (newState === 'turn' && oldState !== 'turn') {
+      showSnackbar(connStore.techMode ? t('conn.turn_toast_tech') : t('conn.turn_toast'), 'info', 6000)
+    }
+  },
+)
 
 // ─── Dynamic privacy bar text ─────────────────────────────
 const privacyText = computed(() => {
   switch (connStore.state) {
-    case 'p2p':        return t('app.privacy')
-    case 'turn':       return t('app.privacy_turn')
-    case 'relay':      return t('app.privacy_relay')
-    case 'connecting': return t('app.privacy_connecting')
-    default:           return t('app.privacy')
+    case 'p2p':
+      return t('app.privacy')
+    case 'turn':
+      return t('app.privacy_turn')
+    case 'relay':
+      return t('app.privacy_relay')
+    case 'connecting':
+      return t('app.privacy_connecting')
+    default:
+      return t('app.privacy')
   }
 })
 
 const privacyIcon = computed(() => {
   switch (connStore.state) {
-    case 'p2p':        return 'mdi-lock'
-    case 'turn':       return 'mdi-shield-lock-outline'
-    case 'relay':      return 'mdi-lock-open-variant-outline'
-    case 'connecting': return 'mdi-dots-horizontal-circle-outline'
-    default:           return 'mdi-lock'
+    case 'p2p':
+      return 'mdi-lock'
+    case 'turn':
+      return 'mdi-shield-lock-outline'
+    case 'relay':
+      return 'mdi-lock-open-variant-outline'
+    case 'connecting':
+      return 'mdi-dots-horizontal-circle-outline'
+    default:
+      return 'mdi-lock'
   }
 })
 
@@ -258,7 +325,7 @@ function onAttachClick() {
 function onFilePicked(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
-  input.value = ''  // allow re-picking the same file later
+  input.value = '' // allow re-picking the same file later
   if (!file) return
   const result = attachFile(file)
   if (!result.ok && result.reason === 'too_large') {
@@ -293,7 +360,7 @@ async function copyInvite() {
   const url = window.location.href
   copy(url)
   showCopied.value = true
-  setTimeout(() => showCopied.value = false, 3000)
+  setTimeout(() => (showCopied.value = false), 3000)
   qrDataUrl.value = await QRCode.toDataURL(url, {
     width: 220,
     margin: 2,
@@ -336,7 +403,10 @@ function dismissRoomEnded() {
 
 function showSnackbar(text: string, color: string, duration = 0) {
   snackbar.value = { show: true, text, color }
-  if (duration) setTimeout(() => { snackbar.value.show = false }, duration)
+  if (duration)
+    setTimeout(() => {
+      snackbar.value.show = false
+    }, duration)
 }
 
 const isMobile = computed(() => window.innerWidth < 768)
@@ -354,11 +424,13 @@ function onComingSoon(label: string) {
 
 <template>
   <div class="room-layout">
-
     <!-- ═══ PRE-JOIN SCREEN ════════════════════════════════ -->
     <div v-if="preJoin && preJoin !== 'loading'" class="prejoin-overlay">
       <div class="prejoin-card">
-        <div class="prejoin-logo"><v-icon color="warning" size="28">mdi-ghost</v-icon> <span class="prejoin-appname">DarkenChat</span></div>
+        <div class="prejoin-logo">
+          <v-icon color="warning" size="28">mdi-ghost</v-icon>
+          <span class="prejoin-appname">DarkenChat</span>
+        </div>
         <div class="prejoin-room">{{ roomKey }}</div>
 
         <div class="prejoin-nick-row">
@@ -369,8 +441,7 @@ function onComingSoon(label: string) {
             density="compact"
             hide-details
             autofocus
-            @keyup.enter="doJoin"
-          />
+            @keyup.enter="doJoin" />
           <v-btn icon="mdi-dice-multiple" variant="text" size="small" @click="preJoinRandomize" />
         </div>
 
@@ -380,9 +451,12 @@ function onComingSoon(label: string) {
           block
           :disabled="!preJoinNick.trim()"
           :prepend-icon="preJoin === 'create' ? 'mdi-plus-circle' : 'mdi-arrow-right'"
-          @click="doJoin"
-        >
-          {{ preJoin === 'create' ? t('room.create_as', { nick: preJoinNick || '…' }) : t('room.join_as', { nick: preJoinNick || '…' }) }}
+          @click="doJoin">
+          {{
+            preJoin === 'create'
+              ? t('room.create_as', { nick: preJoinNick || '…' })
+              : t('room.join_as', { nick: preJoinNick || '…' })
+          }}
         </v-btn>
 
         <v-btn variant="text" size="small" class="mt-2" @click="router.push('/')">
@@ -404,7 +478,9 @@ function onComingSoon(label: string) {
         <span class="room-key">{{ roomKey }}</span>
 
         <!-- Connection status icon -->
-        <v-tooltip :text="connStore.techMode ? t('conn.' + connStore.state + '_tech') : t('conn.' + connStore.state)" location="bottom">
+        <v-tooltip
+          :text="connStore.techMode ? t('conn.' + connStore.state + '_tech') : t('conn.' + connStore.state)"
+          location="bottom">
           <template #activator="{ props: tp }">
             <v-btn
               :icon="connStore.icon"
@@ -412,8 +488,7 @@ function onComingSoon(label: string) {
               variant="text"
               :style="{ color: connStore.color }"
               v-bind="tp"
-              @click="showConnDetail = !showConnDetail"
-            />
+              @click="showConnDetail = !showConnDetail" />
           </template>
         </v-tooltip>
 
@@ -421,7 +496,13 @@ function onComingSoon(label: string) {
         <div class="invite-wrap">
           <v-tooltip :text="t('room.invite')" location="bottom">
             <template #activator="{ props: tp }">
-              <v-btn icon="mdi-account-plus" size="small" variant="text" color="primary" v-bind="tp" @click="copyInvite" />
+              <v-btn
+                icon="mdi-account-plus"
+                size="small"
+                variant="text"
+                color="primary"
+                v-bind="tp"
+                @click="copyInvite" />
             </template>
           </v-tooltip>
           <Transition name="fade">
@@ -434,7 +515,13 @@ function onComingSoon(label: string) {
         <!-- Chair-only: close room for everyone -->
         <v-tooltip v-if="roomStore.isChair" :text="t('chair.close_room_tooltip')" location="bottom">
           <template #activator="{ props: tp }">
-            <v-btn icon="mdi-stop-circle-outline" size="small" variant="text" color="error" v-bind="tp" @click="showEndConfirm = true" />
+            <v-btn
+              icon="mdi-stop-circle-outline"
+              size="small"
+              variant="text"
+              color="error"
+              v-bind="tp"
+              @click="showEndConfirm = true" />
           </template>
         </v-tooltip>
 
@@ -459,10 +546,7 @@ function onComingSoon(label: string) {
       <!-- BODY -->
       <div class="room-body">
         <!-- Sidebar: member list -->
-        <aside
-          class="room-sidebar"
-          :class="{ 'sidebar-open': sidebarOpen }"
-        >
+        <aside class="room-sidebar" :class="{ 'sidebar-open': sidebarOpen }">
           <!-- Mobile close button -->
           <v-btn
             v-if="isMobile"
@@ -470,8 +554,7 @@ function onComingSoon(label: string) {
             size="x-small"
             variant="text"
             class="sidebar-close-btn"
-            @click="sidebarOpen = false"
-          />
+            @click="sidebarOpen = false" />
           <div class="sidebar-header">
             <span class="sidebar-title">{{ t('room.members_count', { count: roomStore.members.length }) }}</span>
           </div>
@@ -481,8 +564,7 @@ function onComingSoon(label: string) {
             :client-id="roomStore.clientId"
             :is-chair="roomStore.isChair"
             @kick="onKickRequest"
-            @open-room-config="onOpenRoomConfig"
-          />
+            @open-room-config="onOpenRoomConfig" />
         </aside>
 
         <!-- Main: messages + editor -->
@@ -501,8 +583,7 @@ function onComingSoon(label: string) {
               @download-file="onDownloadFile"
               @view-file="onViewFile"
               @join-voice="onJoinVoiceFromBubble"
-              @open-room-config="onOpenRoomConfig"
-            />
+              @open-room-config="onOpenRoomConfig" />
           </div>
 
           <ForwardPanel
@@ -510,26 +591,22 @@ function onComingSoon(label: string) {
             :messages="msgStore.messages"
             :client-id="roomStore.clientId"
             @forward="onForwardSend"
-            @cancel="showForward = false"
-          />
+            @cancel="showForward = false" />
 
-          <input
-            v-if="!showForward"
-            ref="fileInput"
-            type="file"
-            style="display: none"
-            @change="onFilePicked"
-          />
+          <input v-if="!showForward" ref="fileInput" type="file" style="display: none" @change="onFilePicked" />
 
           <!-- Hidden audio sinks for remote voice streams -->
           <div class="voice-audio-host" aria-hidden="true">
             <audio
               v-for="[id, stream] in voiceStore.remoteStreams"
               :key="id"
-              :ref="(el) => { if (el) (el as HTMLAudioElement).srcObject = stream }"
+              :ref="
+                el => {
+                  if (el) (el as HTMLAudioElement).srcObject = stream
+                }
+              "
               autoplay
-              playsinline
-            />
+              playsinline />
           </div>
 
           <RichEditor
@@ -537,8 +614,7 @@ function onComingSoon(label: string) {
             :disabled="roomStore.reconnecting"
             :members="roomStore.members"
             :client-id="roomStore.clientId"
-            @send="onSend"
-          >
+            @send="onSend">
             <template #action-bar>
               <v-tooltip :text="t('forward.tooltip')" location="top">
                 <template #activator="{ props: tp }">
@@ -547,8 +623,7 @@ function onComingSoon(label: string) {
                     size="x-small"
                     variant="text"
                     v-bind="tp"
-                    @click="showForward = !showForward"
-                  />
+                    @click="showForward = !showForward" />
                 </template>
               </v-tooltip>
               <v-tooltip :text="t('file.attach_tooltip')" location="top">
@@ -559,17 +634,19 @@ function onComingSoon(label: string) {
                     variant="text"
                     :disabled="roomStore.reconnecting"
                     v-bind="tp"
-                    @click="onAttachClick"
-                  />
+                    @click="onAttachClick" />
                 </template>
               </v-tooltip>
               <!-- Voice chat (phone icon = real entry) -->
               <v-tooltip
-                :text="voiceStore.inVoice
-                  ? t('voice.leave')
-                  : (voiceStore.activeSessionId ? t('voice.busy') : t('voice.start'))"
-                location="top"
-              >
+                :text="
+                  voiceStore.inVoice
+                    ? t('voice.leave')
+                    : voiceStore.activeSessionId
+                      ? t('voice.busy')
+                      : t('voice.start')
+                "
+                location="top">
                 <template #activator="{ props: tp }">
                   <v-btn
                     :icon="voiceStore.inVoice ? 'mdi-phone-in-talk' : 'mdi-phone'"
@@ -578,8 +655,7 @@ function onComingSoon(label: string) {
                     :color="voiceStore.inVoice ? 'success' : undefined"
                     :disabled="voiceCtrlDisabled"
                     v-bind="tp"
-                    @click="onToggleVoice"
-                  />
+                    @click="onToggleVoice" />
                 </template>
               </v-tooltip>
               <!-- Video call: not implemented yet -->
@@ -598,24 +674,38 @@ function onComingSoon(label: string) {
                    Desktop shows the tooltip on hover; mobile taps the button. -->
               <v-tooltip :text="`${t('common.document')} · ${t('common.coming_soon')}`" location="top">
                 <template #activator="{ props: tp }">
-                  <v-btn icon="mdi-file-document-outline" size="x-small" variant="text" v-bind="tp" @click="onComingSoon(t('common.document'))" />
+                  <v-btn
+                    icon="mdi-file-document-outline"
+                    size="x-small"
+                    variant="text"
+                    v-bind="tp"
+                    @click="onComingSoon(t('common.document'))" />
                 </template>
               </v-tooltip>
               <v-tooltip :text="`${t('common.canvas')} · ${t('common.coming_soon')}`" location="top">
                 <template #activator="{ props: tp }">
-                  <v-btn icon="mdi-palette-outline" size="x-small" variant="text" v-bind="tp" @click="onComingSoon(t('common.canvas'))" />
+                  <v-btn
+                    icon="mdi-palette-outline"
+                    size="x-small"
+                    variant="text"
+                    v-bind="tp"
+                    @click="onComingSoon(t('common.canvas'))" />
                 </template>
               </v-tooltip>
               <v-tooltip :text="`${t('common.map')} · ${t('common.coming_soon')}`" location="top">
                 <template #activator="{ props: tp }">
-                  <v-btn icon="mdi-map-outline" size="x-small" variant="text" v-bind="tp" @click="onComingSoon(t('common.map'))" />
+                  <v-btn
+                    icon="mdi-map-outline"
+                    size="x-small"
+                    variant="text"
+                    v-bind="tp"
+                    @click="onComingSoon(t('common.map'))" />
                 </template>
               </v-tooltip>
               <v-tooltip
                 v-if="voiceStore.inVoice"
                 :text="voiceStore.muted ? t('voice.unmute') : t('voice.mute')"
-                location="top"
-              >
+                location="top">
                 <template #activator="{ props: tp }">
                   <v-btn
                     :icon="voiceStore.muted ? 'mdi-volume-off' : 'mdi-volume-high'"
@@ -623,8 +713,7 @@ function onComingSoon(label: string) {
                     variant="text"
                     :color="voiceStore.muted ? 'warning' : undefined"
                     v-bind="tp"
-                    @click="toggleMute"
-                  />
+                    @click="toggleMute" />
                 </template>
               </v-tooltip>
             </template>
@@ -634,7 +723,9 @@ function onComingSoon(label: string) {
 
       <!-- Privacy bar -->
       <footer class="privacy-bar">
-        <v-icon size="13" :style="{ verticalAlign: 'middle', marginRight: '4px', color: privacyColor }">{{ privacyIcon }}</v-icon>
+        <v-icon size="13" :style="{ verticalAlign: 'middle', marginRight: '4px', color: privacyColor }">
+          {{ privacyIcon }}
+        </v-icon>
         <span :style="{ color: privacyColor }">{{ privacyText }}</span>
       </footer>
 
@@ -654,7 +745,11 @@ function onComingSoon(label: string) {
           <!-- TURN server settings -->
           <v-divider />
           <v-card-text>
-            <div class="text-caption mb-2" style="color: var(--dc-gray); text-transform: uppercase; letter-spacing: .05em">{{ t('conn.turn_server') }}</div>
+            <div
+              class="text-caption mb-2"
+              style="color: var(--dc-gray); text-transform: uppercase; letter-spacing: 0.05em">
+              {{ t('conn.turn_server') }}
+            </div>
 
             <!-- Metered.ca built-in option -->
             <template v-if="turnStore.meteredEnabled && !turnStore.useCustom">
@@ -664,8 +759,7 @@ function onComingSoon(label: string) {
                 density="compact"
                 hide-details
                 color="primary"
-                class="mb-2"
-              />
+                class="mb-2" />
             </template>
 
             <!-- No custom: show server default info -->
@@ -689,31 +783,27 @@ function onComingSoon(label: string) {
                 density="compact"
                 hide-details
                 color="primary"
-                class="mb-2"
-              />
+                class="mb-2" />
               <v-text-field
                 v-model="turnStore.customUrl"
                 :label="t('conn.turn_url')"
                 :placeholder="turnStore.serverUrl || 'turn:your-server.com:3478'"
                 density="compact"
                 hide-details
-                class="mt-3 mb-3"
-              />
+                class="mt-3 mb-3" />
               <v-text-field
                 v-model="turnStore.customUsername"
                 :label="t('conn.turn_username')"
                 density="compact"
                 hide-details
-                class="mb-3"
-              />
+                class="mb-3" />
               <v-text-field
                 v-model="turnStore.customCredential"
                 :label="t('conn.turn_credential')"
                 type="password"
                 density="compact"
                 hide-details
-                class="mb-3"
-              />
+                class="mb-3" />
               <div class="text-caption mt-2" style="color: var(--dc-gray)">{{ t('conn.turn_apply_hint') }}</div>
             </template>
 
@@ -724,8 +814,7 @@ function onComingSoon(label: string) {
               density="compact"
               hide-details
               color="primary"
-              class="mt-2"
-            />
+              class="mt-2" />
           </v-card-text>
 
           <v-divider />
@@ -735,8 +824,7 @@ function onComingSoon(label: string) {
               :label="t('conn.tech_mode_label')"
               density="compact"
               hide-details
-              color="primary"
-            />
+              color="primary" />
           </v-card-text>
           <v-card-actions class="justify-end">
             <v-btn variant="text" @click="showConnDetail = false">{{ t('common.close') }}</v-btn>
@@ -760,12 +848,13 @@ function onComingSoon(label: string) {
               :label="t('conn.tech_mode_label')"
               density="compact"
               hide-details
-              color="primary"
-            />
+              color="primary" />
           </v-card-text>
           <v-card-actions class="justify-end gap-2">
             <v-btn variant="text" @click="declineRelay">{{ t('conn.relay_confirm_cancel') }}</v-btn>
-            <v-btn color="warning" @click="showRelayConfirm = false; confirmRelay(true)">{{ t('conn.relay_confirm_ok') }}</v-btn>
+            <v-btn color="warning" @click="acceptRelay">
+              {{ t('conn.relay_confirm_ok') }}
+            </v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -798,7 +887,8 @@ function onComingSoon(label: string) {
       <v-dialog v-model="showRoomEndedDialog" persistent max-width="400">
         <v-card color="surface" class="text-center">
           <v-card-title class="justify-center">
-            <v-icon color="warning" class="mr-1">mdi-ghost</v-icon>DarkenChat
+            <v-icon color="warning" class="mr-1">mdi-ghost</v-icon>
+            DarkenChat
           </v-card-title>
           <v-card-text>{{ t('system.room_ended') }}</v-card-text>
           <v-card-actions class="justify-center">
@@ -811,7 +901,8 @@ function onComingSoon(label: string) {
       <v-dialog v-model="showKickedDialog" persistent max-width="400">
         <v-card color="surface" class="text-center">
           <v-card-title class="justify-center">
-            <v-icon color="warning" class="mr-1">mdi-ghost</v-icon>DarkenChat
+            <v-icon color="warning" class="mr-1">mdi-ghost</v-icon>
+            DarkenChat
           </v-card-title>
           <v-card-text>{{ t('chair.kicked_notice') }}</v-card-text>
           <v-card-actions class="justify-center">
@@ -824,11 +915,14 @@ function onComingSoon(label: string) {
       <v-dialog v-model="showSwitchConfirm" max-width="420">
         <v-card color="surface">
           <v-card-text>
-            <v-icon color="warning" class="mr-1">mdi-alert</v-icon>{{ t('room.switch_warning', { key: roomKey }) }}
+            <v-icon color="warning" class="mr-1">mdi-alert</v-icon>
+            {{ t('room.switch_warning', { key: roomKey }) }}
           </v-card-text>
           <v-card-actions class="justify-end gap-2">
             <v-btn variant="text" @click="showSwitchConfirm = false">{{ t('common.cancel') }}</v-btn>
-            <v-btn color="warning" @click="leave(); router.push('/')">{{ t('room.leave_room_btn') }}</v-btn>
+            <v-btn color="warning" @click="leaveAndGoHome">
+              {{ t('room.leave_room_btn') }}
+            </v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -836,9 +930,11 @@ function onComingSoon(label: string) {
       <!-- QR code popup -->
       <v-dialog v-model="showQR" max-width="300">
         <v-card color="surface">
-          <v-card-text class="text-caption text-center" style="color: var(--dc-gold)">{{ t('room.copied') }}</v-card-text>
+          <v-card-text class="text-caption text-center" style="color: var(--dc-gold)">
+            {{ t('room.copied') }}
+          </v-card-text>
           <v-card-text class="d-flex justify-center">
-            <img :src="qrDataUrl" width="220" height="220" style="border-radius: 10px; display:block" />
+            <img :src="qrDataUrl" width="220" height="220" style="border-radius: 10px; display: block" />
           </v-card-text>
           <v-card-actions class="justify-center">
             <v-btn variant="text" size="small" @click="showQR = false">{{ t('common.close') }}</v-btn>
@@ -863,8 +959,7 @@ function onComingSoon(label: string) {
               :label="t('room_config.ai_turn_limit_label')"
               :hint="t('room_config.ai_turn_limit_hint')"
               persistent-hint
-              density="compact"
-            />
+              density="compact" />
             <div v-if="!roomStore.isChair" class="text-caption mt-2" style="color: var(--dc-gray)">
               <v-icon size="14" class="mr-1">mdi-information-outline</v-icon>
               {{ t('room_config.chair_only') }}
@@ -872,18 +967,15 @@ function onComingSoon(label: string) {
           </v-card-text>
           <v-card-actions class="justify-end gap-2">
             <v-btn variant="text" @click="showRoomConfig = false">{{ t('common.cancel') }}</v-btn>
-            <v-btn color="primary" :disabled="!roomStore.isChair" @click="onSaveRoomConfig">{{ t('room_config.save') }}</v-btn>
+            <v-btn color="primary" :disabled="!roomStore.isChair" @click="onSaveRoomConfig">
+              {{ t('room_config.save') }}
+            </v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
 
       <!-- Reconnecting snackbar -->
-      <v-snackbar
-        v-model="snackbar.show"
-        :color="snackbar.color"
-        location="top"
-        timeout="-1"
-      >
+      <v-snackbar v-model="snackbar.show" :color="snackbar.color" location="top" timeout="-1">
         {{ snackbar.text }}
       </v-snackbar>
     </template>
@@ -952,14 +1044,20 @@ function onComingSoon(label: string) {
   flex-shrink: 0;
   min-height: 48px;
 }
-.app-logo-icon { font-size: 1.3rem; }
+.app-logo-icon {
+  font-size: 1.3rem;
+}
 .room-key {
   font-weight: 700;
   font-size: 1rem;
   color: var(--dc-gold);
   letter-spacing: 0.1em;
 }
-.invite-wrap { position: relative; display: flex; align-items: center; }
+.invite-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
 .copied-tip {
   position: absolute;
   left: calc(100% + 8px);
@@ -1028,14 +1126,22 @@ function onComingSoon(label: string) {
     width: 240px;
     border-right: none;
     border-left: 1px solid #2a2a2a;
-    box-shadow: -4px 0 20px rgba(0,0,0,0.4);
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.4);
   }
-  .room-sidebar.sidebar-open { transform: translateX(0); }
+  .room-sidebar.sidebar-open {
+    transform: translateX(0);
+  }
 }
 
 /* Fade */
-.fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
 
 /* Sidebar close btn (mobile) */
 .sidebar-close-btn {
@@ -1050,5 +1156,7 @@ function onComingSoon(label: string) {
   margin-left: 12px;
 }
 
-.voice-audio-host { display: none; }
+.voice-audio-host {
+  display: none;
+}
 </style>
