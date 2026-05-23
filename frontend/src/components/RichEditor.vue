@@ -23,6 +23,10 @@ const emit = defineEmits<{
 
 const props = defineProps<{
   disabled?: boolean
+  // When set together with `disabled`, an overlay covers the whole composer
+  // with this text + a spinner — used for the "establishing connection"
+  // window so the user can't type into a half-built transport.
+  overlayText?: string
   members?: MemberInfo[]
   clientId?: string
 }>()
@@ -328,6 +332,13 @@ onUnmounted(() => {
 
 <template>
   <div class="rich-editor">
+    <!-- Connection-establishing overlay: blocks the whole composer while the
+         transport is still wiring up (see `overlayText` prop). -->
+    <div v-if="disabled && overlayText" class="editor-overlay">
+      <v-progress-circular indeterminate size="18" width="2" color="primary" />
+      <span>{{ overlayText }}</span>
+    </div>
+
     <!-- Combined bar: action-bar (left, fixed) + toolbar (right, collapsible) -->
     <div ref="combinedBar" class="combined-bar">
       <div class="action-bar">
@@ -491,8 +502,24 @@ onUnmounted(() => {
 
 <style scoped>
 .rich-editor {
+  position: relative;
   border-top: 1px solid #2e2e2e;
   background: var(--dc-panel);
+}
+.editor-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(20, 20, 20, 0.82);
+  backdrop-filter: blur(2px);
+  font-size: 0.85rem;
+  color: var(--dc-gray);
+  cursor: not-allowed;
+  user-select: none;
 }
 .combined-bar {
   display: flex;

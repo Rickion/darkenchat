@@ -28,7 +28,9 @@ export function useSignaling(onMessage: MessageHandler) {
         hbTimer = setInterval(() => {
           send({ type: 'heartbeat' })
           hbTimeoutTimer = setTimeout(() => {
-            if (Date.now() - lastAckTime > HEARTBEAT_TIMEOUT_MS) {
+            const ackAge = Date.now() - lastAckTime
+            if (ackAge > HEARTBEAT_TIMEOUT_MS) {
+              console.debug(`[darkenchat] signaling WS heartbeat timeout — no ack for ${ackAge}ms, closing socket`)
               disconnected.value = true
               clearInterval(hbTimer!)
               socket.close()
@@ -53,7 +55,10 @@ export function useSignaling(onMessage: MessageHandler) {
 
       socket.onerror = () => reject(new Error('WebSocket error'))
 
-      socket.onclose = () => {
+      socket.onclose = ev => {
+        console.debug(
+          `[darkenchat] signaling WS closed — code=${ev.code} reason="${ev.reason}" wasClean=${ev.wasClean}`,
+        )
         connected.value = false
         disconnected.value = true
         clearInterval(hbTimer!)

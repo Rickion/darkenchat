@@ -47,6 +47,15 @@ export interface ForwardPayload {
   note?: string
 }
 
+// Structured expert-panel stance an AI member attaches to a chat message
+// (via the MCP send_message tool's `stance` parameter). Humans never set it;
+// the browser only renders it. `agreeWith`/`disagreeWith` are clientIds.
+export interface MessageStance {
+  position: string
+  agreeWith?: string[]
+  disagreeWith?: string[]
+}
+
 export interface Message {
   id: string
   type: MessageType
@@ -59,6 +68,7 @@ export interface Message {
   forwardOf?: ForwardPayload
   isBot?: boolean
   meta?: Record<string, unknown>
+  stance?: MessageStance
 }
 
 export interface SwitchLog {

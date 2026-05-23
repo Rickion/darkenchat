@@ -11,7 +11,18 @@ import { nanoid } from 'nanoid'
 
 import type { C2S } from './types.js'
 import { PROTOCOL_VERSION } from './types.js'
-import { rooms, generateKey, getOrCreateRoom, addMember, removeMember, broadcast, send, memberInfo } from './rooms.js'
+import {
+  rooms,
+  generateKey,
+  getOrCreateRoom,
+  addMember,
+  removeMember,
+  broadcast,
+  send,
+  memberInfo,
+  dissolveIfBotsOnly,
+  announceChairChange,
+} from './rooms.js'
 import { checkAndRecord, bannedKeys, configure as configureGuard } from './guard.js'
 import { handleScore } from './election.js'
 import { registerAdminRoutes, setAdminToken } from './admin.js'
@@ -237,11 +248,13 @@ app.register(async fastify => {
         case 'join': {
           const key = msg.roomKey.toUpperCase()
 
-          // Protocol-version handshake. Absent = legacy client (pre-v1), which
-          // we still accept since v1 is additive. A *mismatched* explicit
-          // version is hard-refused with a friendly error code so the client
-          // can prompt the user to upgrade instead of silently misbehaving.
-          if (msg.protocolVersion !== undefined && msg.protocolVersion !== PROTOCOL_VERSION) {
+          // Protocol-version handshake (strict). Every conforming client
+          // (browser, MCP, future third-party) MUST send `protocolVersion`
+          // matching the server's. Missing field is treated as v0 and
+          // rejected — there is no grandfathered "legacy" tier. This is a
+          // zero-trust stance: anything that can't prove its version isn't
+          // allowed to interact with rooms.
+          if (msg.protocolVersion !== PROTOCOL_VERSION) {
             socket.send(JSON.stringify({ type: 'error', code: 'protocol_version_mismatch' }))
             return
           }
@@ -253,6 +266,21 @@ app.register(async fastify => {
           if (bannedKeys.has(key)) {
             socket.send(JSON.stringify({ type: 'room_banned' }))
             return
+          }
+
+          // Bots may only join rooms that already contain at least one human.
+          // Rejecting *before* getOrCreateRoom avoids materialising an empty
+          // bot-only room that nothing would ever clean up. A brand-new room
+          // key, or a room whose only remaining members are other bots, both
+          // fail this check — DarkenChat is built around human-led chat and a
+          // bots-only room produces no useful interaction.
+          if (msg.isBot) {
+            const existing = rooms.get(key)
+            const hasHuman = !!existing && [...existing.members.values()].some(m => !m.isBot)
+            if (!hasHuman) {
+              socket.send(JSON.stringify({ type: 'error', code: 'no_humans_in_room' }))
+              return
+            }
           }
 
           const room = getOrCreateRoom(key)
@@ -395,12 +423,17 @@ app.register(async fastify => {
           if (!target) return
 
           send(target, { type: 'kicked' })
-          removeMember(room, msg.targetId)
-          broadcast(room, {
-            type: 'member_left',
-            clientId: msg.targetId,
-            nickname: target.nickname,
-          })
+          {
+            const prevChairId = room.chairId
+            removeMember(room, msg.targetId)
+            broadcast(room, {
+              type: 'member_left',
+              clientId: msg.targetId,
+              nickname: target.nickname,
+            })
+            announceChairChange(room, prevChairId)
+            dissolveIfBotsOnly(room)
+          }
           break
         }
 
@@ -453,31 +486,21 @@ app.register(async fastify => {
       const room = rooms.get(currentRoomKey)
       if (!room) return
 
+      const prevChairId = room.chairId
       const member = removeMember(room, currentClientId)
       if (member && rooms.has(currentRoomKey)) {
-        // Broadcast chair change if needed
-        if (room.chairId !== currentClientId) {
-          broadcast(room, {
-            type: 'member_left',
-            clientId: currentClientId,
-            nickname: member.nickname,
-          })
-        } else {
-          // Chair changed
-          const newChair = room.members.get(room.chairId)
-          broadcast(room, {
-            type: 'member_left',
-            clientId: currentClientId,
-            nickname: member.nickname,
-          })
-          if (newChair) {
-            broadcast(room, {
-              type: 'new_chair',
-              chairId: newChair.clientId,
-              nickname: newChair.nickname,
-            })
-          }
-        }
+        broadcast(room, {
+          type: 'member_left',
+          clientId: currentClientId,
+          nickname: member.nickname,
+        })
+        // Emit new_chair ONLY if removeMember actually migrated the chair
+        // (i.e. the leaver was the chair and a human successor exists).
+        announceChairChange(room, prevChairId)
+        // If the leaver was the last human, shut the residue down so bots'
+        // MCP loops terminate cleanly. Runs after the member_left broadcast
+        // so clients see leave → room_ended in that order.
+        dissolveIfBotsOnly(room)
       }
 
       currentRoomKey = null
@@ -502,6 +525,7 @@ setInterval(() => {
         } catch {
           /* already dead */
         }
+        const prevChairId = room.chairId
         const removed = removeMember(room, member.clientId)
         if (removed && rooms.has(room.key)) {
           broadcast(room, {
@@ -509,18 +533,13 @@ setInterval(() => {
             clientId: removed.clientId,
             nickname: removed.nickname,
           })
-          // If chair was the one evicted, removeMember already promoted a
-          // successor — announce it.
-          if (room.chairId !== removed.clientId) {
-            const newChair = room.members.get(room.chairId)
-            if (newChair) {
-              broadcast(room, {
-                type: 'new_chair',
-                chairId: newChair.clientId,
-                nickname: newChair.nickname,
-              })
-            }
-          }
+          // Emit new_chair ONLY when the chair genuinely migrated — not on
+          // every non-chair eviction (that was the old bug: it announced the
+          // unchanged chair on every silent-member sweep).
+          announceChairChange(room, prevChairId)
+          // Same human-required rule as the leave / kick paths — if eviction
+          // left the room with no humans, end it.
+          dissolveIfBotsOnly(room)
         }
       }
     }

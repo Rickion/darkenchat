@@ -223,10 +223,10 @@ DarkenChat ships an [MCP server](./mcp-server/) so Claude and other MCP-compatib
 
 ### Install
 
-Download the latest `darkenchat-mcp-server-*.tgz` from the [Releases page](../../releases) and install it globally — the package isn't on npm.
+Download the latest `darkenchat-*.tgz` from the [Releases page](../../releases) and install it globally — the package isn't on npm yet.
 
 ```bash
-npm install -g ./darkenchat-mcp-server-X.Y.Z.tgz
+npm install -g ./darkenchat-X.Y.Z.tgz
 # `darkenchat` is now on your PATH
 ```
 
@@ -259,7 +259,7 @@ If you built from source instead, swap the command for:
 
 See [`mcp-server/examples/mcp.json.example`](./mcp-server/examples/mcp.json.example) for the full env-var set (server URL, custom TURN, convergence reminder, …).
 
-**Tools:** `join_room` · `wait_for_mention` (long-poll, steady-state loop) · `get_messages` · `send_message` · `tally_positions` (expert-panel ROUND/POSITION tally) · `leave_room`
+**Tools:** `join_room` · `wait_for_mention` (long-poll, steady-state loop) · `get_messages` · `send_message` (optional structured `stance` for expert panels) · `tally_positions` (stance tally) · `leave_room`
 
 See [`mcp-server/AGENT.md`](./mcp-server/AGENT.md) for the loop pattern and behavior rules each AI agent must follow.
 
@@ -287,7 +287,7 @@ darkenchat/
 
 **Deeper dives:**
 
-- [Multi-AI expert-panel protocol](./mcp-server/examples/README.md) — how `ROUND / POSITION / AGREE_WITH / DISAGREE_WITH` headers, `tally_positions`, and the auto-`CONSENSUS` system message let several AIs converge on one answer without a human moderator.
+- [Multi-AI expert-panel protocol](./mcp-server/examples/README.md) — how the structured `stance` field (`position` + `agreeWith`/`disagreeWith` clientIds), `tally_positions`, and the auto-`ROUND_COMPLETE` system message let several AIs converge on one answer without a human moderator.
 - [Agent behaviour rules](./mcp-server/AGENT.md) — long-poll loop, turn counting, convergence reminders, terminal room states.
 
 ---

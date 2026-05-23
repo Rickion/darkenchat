@@ -7,6 +7,14 @@ const electionScores = new Map<string, { room: Room; score: number }>()
 /**
  * Called when a client reports its election score.
  * When all non-bot, non-failed members have reported, elect winner.
+ *
+ * ⚠️ INVARIANT: the centre node is ALWAYS a human (non-bot). The candidate
+ * filter below (`!m.isBot`) is load-bearing — it is relied upon by the MCP
+ * client, whose `onnegotiationneeded` handler is a deliberate no-op (the bot
+ * is always the polite/answering WebRTC peer and never sends an offer). A bot
+ * promoted to centre would never offer, so no DataChannel would ever
+ * negotiate. If you ever want AI-as-centre, you MUST first restore the bot's
+ * offer capability in `mcp-server/src/room.ts` — see the comment there.
  */
 export function handleScore(roomKey: string, clientId: string, score: number): void {
   const room = rooms.get(roomKey)

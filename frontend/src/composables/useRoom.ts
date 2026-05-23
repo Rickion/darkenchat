@@ -243,6 +243,10 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       }
 
       case 'member_join': {
+        console.debug(
+          `[darkenchat] member_join: ${msg.member.nickname} (${msg.member.clientId})`,
+          `isBot=${!!msg.member.isBot} iAmCenter=${roomStore.isCenter}`,
+        )
         roomStore.addMember(msg.member)
         if (roomStore.isCenter) {
           // Bots get the same P2P treatment as humans: try STUN → TURN first,
@@ -254,7 +258,25 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
           // Pre-register them in relayPeers as the WS-relay fallback target;
           // sendToMember still picks the open P2P channel first when one
           // exists, so this only activates if/when P2P fails.
-          if (msg.member.isBot) relayPeers.add(msg.member.clientId)
+          if (msg.member.isBot) {
+            relayPeers.add(msg.member.clientId)
+            // Connection-type icon back-stop: the broadcast in onChannelOpen
+            // only fires if P2P actually opens, and the broadcast in `case
+            // 'relay'` only fires once the bot SENDS its first relay frame.
+            // A quiet bot whose P2P failed would otherwise have no icon at
+            // all in the member list. After the channel-open window, if no
+            // DC is open, declare it as relay so the icon shows up promptly.
+            const botId = msg.member.clientId
+            setTimeout(() => {
+              if (!roomStore.isCenter) return
+              if (rtc.hasOpenChannel(botId)) return // P2P / TURN won — onChannelOpen already broadcast
+              if (!roomStore.members.some(m => m.clientId === botId)) return // already left
+              const existing = roomStore.members.find(m => m.clientId === botId)?.connType
+              if (existing) return // some path already set it
+              signaling.send({ type: 'member_conn', clientId: botId, connType: 'relay' })
+              roomStore.updateMemberConn(botId, 'relay')
+            }, 12_000)
+          }
         }
         voice.onMemberJoinedRoom(msg.member.clientId)
         // AI join system message — gear icon on the *first* AI message so a
@@ -268,6 +290,11 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       }
 
       case 'member_left': {
+        const leftMember = roomStore.members.find(m => m.clientId === msg.clientId)
+        console.debug(
+          `[darkenchat] member_left: ${msg.nickname} (${msg.clientId})`,
+          `isBot=${!!leftMember?.isBot} wasCenter=${msg.clientId === roomStore.centerId}`,
+        )
         const wasCenter = msg.clientId === roomStore.centerId
         // Set reconnecting immediately so UI disables send/resend
         if (wasCenter) roomStore.reconnecting = true
@@ -287,6 +314,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       }
 
       case 'new_center': {
+        console.debug(`[darkenchat] new_center: ${msg.centerId} (iAmNewCenter=${msg.centerId === roomStore.clientId})`)
         roomStore.updateCenter(msg.centerId)
         roomStore.reconnecting = true
         connStore.state = 'connecting'
@@ -309,12 +337,14 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       }
 
       case 'new_chair': {
+        console.debug(`[darkenchat] new_chair: ${msg.nickname} (${msg.chairId})`)
         roomStore.updateChair(msg.chairId)
         addSystemMessage('system.new_chair', { name: msg.nickname })
         break
       }
 
       case 'member_conn': {
+        console.debug(`[darkenchat] member_conn: ${msg.clientId} → ${msg.connType}`)
         const hadConnType = roomStore.members.find(m => m.clientId === msg.clientId)?.connType
         roomStore.updateMemberConn(msg.clientId, msg.connType)
         if (!hadConnType) {
@@ -372,12 +402,15 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       }
 
       case 'kicked':
+        console.debug('[darkenchat] received kicked')
         onEvent({ event: 'kicked' })
         break
       case 'room_ended':
+        console.debug('[darkenchat] received room_ended')
         onEvent({ event: 'room_ended' })
         break
       case 'room_banned':
+        console.debug('[darkenchat] received room_banned')
         onEvent({ event: 'room_banned' })
         break
 

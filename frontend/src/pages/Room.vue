@@ -309,6 +309,15 @@ const privacyIcon = computed(() => {
 
 const privacyColor = computed(() => connStore.color)
 
+// ─── Connection-establishing gate ─────────────────────────
+// True while this client is still wiring up its transport — either the
+// initial join (a non-center peer hasn't opened its DataChannel to the
+// center yet) or a mid-session reconnect / center rotation. While true the
+// composer is disabled and shows an overlay, so the user can't fire a
+// message into a half-built pipe. The lone center is never "connecting" in
+// this sense — it has nothing to connect to and can type immediately.
+const connecting = computed(() => roomStore.reconnecting || (connStore.state === 'connecting' && !roomStore.isCenter))
+
 // ─── Actions ──────────────────────────────────────────────
 function onSend(html: string) {
   sendMessage(html)
@@ -318,7 +327,7 @@ function onSend(html: string) {
 const fileInput = ref<HTMLInputElement | null>(null)
 
 function onAttachClick() {
-  if (roomStore.reconnecting) return
+  if (connecting.value) return
   fileInput.value?.click()
 }
 
@@ -371,13 +380,13 @@ async function copyInvite() {
 
 function confirmKick() {
   if (!kickTarget.value) return
-  signaling.send({ type: 'kick' as never, roomKey: roomKey.value, targetId: kickTarget.value.clientId } as never)
+  signaling.send({ type: 'kick', roomKey: roomKey.value, targetId: kickTarget.value.clientId })
   showKickConfirm.value = false
   kickTarget.value = null
 }
 
 function confirmEndRoom() {
-  signaling.send({ type: 'end_room' as never, roomKey: roomKey.value } as never)
+  signaling.send({ type: 'end_room', roomKey: roomKey.value })
   showEndConfirm.value = false
 }
 
@@ -611,7 +620,8 @@ function onComingSoon(label: string) {
 
           <RichEditor
             v-if="!showForward"
-            :disabled="roomStore.reconnecting"
+            :disabled="connecting"
+            :overlay-text="connecting ? t('room.establishing_connection') : ''"
             :members="roomStore.members"
             :client-id="roomStore.clientId"
             @send="onSend">
@@ -632,7 +642,7 @@ function onComingSoon(label: string) {
                     icon="mdi-paperclip"
                     size="x-small"
                     variant="text"
-                    :disabled="roomStore.reconnecting"
+                    :disabled="connecting"
                     v-bind="tp"
                     @click="onAttachClick" />
                 </template>

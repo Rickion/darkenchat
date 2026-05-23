@@ -34,8 +34,18 @@ export function getOrCreateRoom(key: string): Room {
 
 export function addMember(room: Room, member: Member): void {
   room.members.set(member.clientId, member)
-  if (!room.centerId) room.centerId = member.clientId
-  if (!room.chairId) room.chairId = member.clientId
+  // A bot must NEVER hold the centerId or chairId slot:
+  //   • center — the MCP client deliberately suppresses its own WebRTC offer
+  //     (mcp-server room.ts: onnegotiationneeded is a no-op) because it is
+  //     always the polite/answering peer; a bot center would never offer and
+  //     the DataChannel would never negotiate. The election in election.ts
+  //     also filters bots. This `!isBot` guard is the first line of defence.
+  //   • chair — the chairperson is the human room admin (kick / end-room).
+  // In practice the "no humans, no bot join" rule means the first member is
+  // always human anyway; this guard makes the invariant explicit and holds
+  // even if that rule is ever relaxed.
+  if (!room.centerId && !member.isBot) room.centerId = member.clientId
+  if (!room.chairId && !member.isBot) room.chairId = member.clientId
 }
 
 export function removeMember(room: Room, clientId: string): Member | undefined {
@@ -59,6 +69,50 @@ export function removeMember(room: Room, clientId: string): Member | undefined {
   }
 
   return member
+}
+
+/**
+ * If `room` still has members but all of them are bots, broadcast `room_ended`
+ * to every remaining bot, delete the room, and return true. Returns false in
+ * every other case (room is gone, room is empty, or at least one human is
+ * still present).
+ *
+ * This mirrors the join-time rule that DarkenChat rooms must have a human:
+ * once the last human leaves, the bots-only residue is no longer useful and
+ * we shut it down so the bots' MCP loops terminate cleanly instead of holding
+ * the room open forever.
+ *
+ * Callers must invoke this AFTER they've broadcast the triggering
+ * `member_left` (so clients see the leave event before the room ending) and
+ * BEFORE doing any chair-migration work (which is moot once the room is gone).
+ */
+export function dissolveIfBotsOnly(room: Room): boolean {
+  if (!rooms.has(room.key)) return false
+  if (room.members.size === 0) return false
+  for (const m of room.members.values()) {
+    if (!m.isBot) return false
+  }
+  broadcast(room, { type: 'room_ended' })
+  rooms.delete(room.key)
+  return true
+}
+
+/**
+ * Broadcast a `new_chair` event ONLY when the chair actually changed.
+ *
+ * Callers capture `prevChairId` before `removeMember` (which may migrate the
+ * chair to the next-earliest human) and pass it here afterwards. If the chair
+ * is unchanged we stay silent — without this guard, every non-chair member
+ * leaving used to emit a redundant "<nick> is now the chairperson" system
+ * message naming the *same* unchanged chair, which spammed the chat history
+ * (especially with flaky bots churning leave/join). If the chair slot points
+ * at nobody (room mid-dissolve) we also skip.
+ */
+export function announceChairChange(room: Room, prevChairId: string): void {
+  if (room.chairId === prevChairId) return
+  const newChair = room.members.get(room.chairId)
+  if (!newChair) return
+  broadcast(room, { type: 'new_chair', chairId: newChair.clientId, nickname: newChair.nickname })
 }
 
 export function broadcast(room: Room, payload: S2C, exceptId?: string): void {

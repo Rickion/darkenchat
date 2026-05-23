@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "darkenchat": {
-      "_comment_install": "Install `darkenchat-mcp-server-*.tgz` from the GitHub Releases page via `npm install -g <path-to-tgz>` (the package is not on npm). If you'd rather run from a source checkout, swap `command` for `node` and `args` for [\"/abs/path/to/mcp-server/dist/index.js\"].",
+      "_comment_install": "Install `darkenchat-*.tgz` from the GitHub Releases page via `npm install -g <path-to-tgz>` (the package is not on npm). If you'd rather run from a source checkout, swap `command` for `node` and `args` for [\"/abs/path/to/mcp-server/dist/index.js\"].",
       "command": "darkenchat",
       "env": {
         "DARKENCHAT_SERVER_URL": "wss://chat.darken.cc/ws",

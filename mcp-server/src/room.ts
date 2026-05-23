@@ -11,6 +11,14 @@ const FALLBACK_STUN: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
 ]
 const HEARTBEAT_MS = 3000
+// We mark the WS connection wedged if no `ack` frame has been seen for this
+// long despite our heartbeat ticking every HEARTBEAT_MS — 10s = ~3 missed
+// acks. When wedged we force-close the WS, which lets the existing silent
+// reconnect path (ws.on('close')) take over. Without this check, a half-open
+// TCP (kept alive by the OS / NAT box but no app traffic flowing) puts the
+// MCP into a "pseudo-online" state where send_message looks ok but messages
+// are silently dropped.
+const HEARTBEAT_ACK_TIMEOUT_MS = 10_000
 // If the DataChannel hasn't opened within this many ms after a join / center
 // switch, give up on P2P for now and flip to WS-relay outbound so the AI is
 // never silently stuck.
@@ -24,6 +32,22 @@ const CHANNEL_OPEN_TIMEOUT_MS = 10_000
 const CONVERGE_TURNS = Math.max(1, Number(process.env.DARKENCHAT_CONVERGE_TURNS ?? '12') || 12)
 // History buffer cap for tally / get_messages / wait_for_mention.
 const HISTORY_CAP = 500
+// Silent reconnect parameters. When the signaling WebSocket drops (network
+// blip, signaling restart, …) we re-open and re-join with `lastClientId` so
+// the AI's wait_for_mention loop never sees a premature
+// `roomStatus: 'disconnected'` from a transient blip. Only after exhausting
+// all attempts do we surface the failure to the AI.
+const MAX_RECONNECT_ATTEMPTS = 5
+const RECONNECT_BASE_DELAY_MS = 1_000
+const RECONNECT_MAX_DELAY_MS = 30_000
+
+// Lifecycle diagnostics. Writes to stderr (NOT stdout — stdout is the MCP
+// stdio protocol channel). Hosts that capture MCP stderr show these; the
+// prefix + ISO timestamp make them greppable and correlatable with the
+// browser console and the room's system messages.
+export function dlog(...args: unknown[]): void {
+  console.error(`[darkenchat ${new Date().toISOString()}]`, ...args)
+}
 
 // ── TURN / domain configuration ─────────────────────────────────────
 // By default the MCP fetches TURN credentials from the signaling server it
@@ -100,6 +124,15 @@ import { MENTION_ALL_ID, MENTION_ALL_AI_ID, MENTION_ALL_ALIASES, MENTION_ALL_AI_
 import { PROTOCOL_VERSION } from './_shared/protocol.js'
 export { MENTION_ALL_ID, MENTION_ALL_AI_ID }
 
+// Structured expert-panel stance, attached to a chat message via the
+// send_message tool's `stance` parameter. Replaces the old free-text
+// ROUND/POSITION/AGREE_WITH/DISAGREE_WITH header — see tally.ts.
+export interface MessageStance {
+  position: string // this AI's stance, free text
+  agreeWith?: string[] // clientIds this AI agrees with
+  disagreeWith?: string[] // clientIds this AI disagrees with
+}
+
 export interface IncomingMessage {
   from: string
   fromId: string
@@ -109,6 +142,21 @@ export interface IncomingMessage {
   mentions?: MentionRef[]
   mentionedMe?: boolean
   transport?: 'p2p' | 'relay'
+  stance?: MessageStance // present on expert-panel messages
+}
+
+/** Validate a wire `stance` blob. Returns undefined when absent / malformed. */
+function parseStance(raw: unknown): MessageStance | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Record<string, unknown>
+  if (typeof r.position !== 'string' || !r.position.trim()) return undefined
+  const ids = (v: unknown): string[] | undefined =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined
+  return {
+    position: r.position,
+    agreeWith: ids(r.agreeWith),
+    disagreeWith: ids(r.disagreeWith),
+  }
 }
 
 type MessageListener = (msg: IncomingMessage) => void
@@ -329,10 +377,22 @@ export class RoomClient {
     timer: NodeJS.Timeout
   }> = []
   private hbTimer: NodeJS.Timeout | null = null
+  // Wall-clock timestamp of the last `ack` frame from signaling. Updated in
+  // the message handler; checked by startHeartbeat to detect a wedged WS.
+  private lastAckTime = 0
   private channelOpenTimer: NodeJS.Timeout | null = null
   private rotationTimer: NodeJS.Timeout | null = null
   private centerId = ''
   private serverUrl = ''
+  // Remembered for silent WS reconnect (`scheduleReconnect`). Set in `join()`.
+  private nickname = 'AI'
+  // True after `leave()` / `kicked` / `room_ended` / `room_banned` / final
+  // reconnect-exhaustion. Suppresses the otherwise-automatic reconnect on
+  // WS close so we don't fight a real shutdown.
+  private intentionalShutdown = false
+  // Backoff state for silent reconnects. Cleared on each successful join.
+  private reconnectAttempts = 0
+  private reconnectTimer: NodeJS.Timeout | null = null
   private iceServers: RTCIceServer[] = FALLBACK_STUN
   // Unix-seconds expiry of the Metered temp credentials currently loaded into
   // `iceServers`. 0 when not using Metered → no rotation scheduled.
@@ -355,8 +415,14 @@ export class RoomClient {
   // via `set_room_config`. 0 means "no limit". When `sentCount` reaches this,
   // `sendMessage` hard-refuses and the AI is told to leave_room immediately.
   private roomTurnLimit = 0
-  // Auto-CONSENSUS one-shot guard.
-  private consensusEmitted = false
+  // Auto round-complete guard. Records the normalised POSITION we last
+  // emitted a ROUND_COMPLETE message for. ROUND_COMPLETE fires once per
+  // *distinct converged position*: if the panel later converges on a
+  // different position (a new topic), the guard naturally re-arms. This
+  // replaces the old explicit ROUND counter — no round number anywhere,
+  // and the signal comes from the tally (computed) rather than from the
+  // AI remembering to bump a header.
+  private lastConvergedPosition = ''
 
   // Public introspection -----------------------------------------------------
   getStatus(): RoomStatus {
@@ -410,190 +476,286 @@ export class RoomClient {
   // Join ---------------------------------------------------------------------
   async join(serverUrl: string, roomKey: string, nickname = 'AI'): Promise<RoomSession> {
     this.serverUrl = serverUrl
+    this.nickname = nickname
+    this.intentionalShutdown = false
+    this.reconnectAttempts = 0
+
     const fetched = await fetchIceServers(serverUrl)
     this.iceServers = fetched.ice
     this.iceExpiresAt = fetched.expiresAt
     this.scheduleIceRotation()
 
-    return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(serverUrl)
+    return new Promise<RoomSession>((resolve, reject) => {
+      this.openWsAndJoin(roomKey, nickname, /* lastClientId */ undefined, resolve, reject)
+    })
+  }
 
-      this.ws.on('open', () => {
-        this.ws.send(
-          JSON.stringify({
-            type: 'join',
+  // Opens a fresh WebSocket and sends a join. Shared between:
+  //   • initial connect — called from `join()`, `resolve`/`reject` settle the
+  //     public Promise on the first server response;
+  //   • silent reconnect — called from `scheduleReconnect()` with
+  //     `lastClientId` so the signaling server treats us as a returning
+  //     member (same `clientId`), and with `resolve`/`reject` both undefined
+  //     so the second `joined` doesn't perturb any external Promise.
+  private openWsAndJoin(
+    roomKey: string,
+    nickname: string,
+    lastClientId: string | undefined,
+    resolve: ((s: RoomSession) => void) | undefined,
+    reject: ((err: Error) => void) | undefined,
+  ): void {
+    this.ws = new WebSocket(this.serverUrl)
+
+    this.ws.on('open', () => {
+      this.ws.send(
+        JSON.stringify({
+          type: 'join',
+          roomKey: roomKey.toUpperCase(),
+          nickname,
+          isBot: true,
+          protocolVersion: PROTOCOL_VERSION,
+          ...(lastClientId ? { lastClientId } : {}),
+        }),
+      )
+    })
+
+    this.ws.on('message', async raw => {
+      let msg: any
+      try {
+        msg = JSON.parse(raw.toString())
+      } catch {
+        return
+      }
+
+      switch (msg.type) {
+        case 'joined': {
+          this.session = {
+            clientId: msg.clientId,
+            nickname: msg.nickname ?? nickname,
+            nicknameSet: msg.nicknameSet ?? 'nato',
             roomKey: roomKey.toUpperCase(),
-            nickname,
-            isBot: true,
-            protocolVersion: PROTOCOL_VERSION,
-          }),
-        )
-      })
-
-      this.ws.on('message', async raw => {
-        let msg: any
-        try {
-          msg = JSON.parse(raw.toString())
-        } catch {
-          return
-        }
-
-        switch (msg.type) {
-          case 'joined': {
-            this.session = {
-              clientId: msg.clientId,
-              nickname: msg.nickname ?? nickname,
-              nicknameSet: msg.nicknameSet ?? 'nato',
-              roomKey: roomKey.toUpperCase(),
-              members: msg.members ?? [],
-            }
-            this.centerId = msg.centerId
-            this.status = 'connected'
-            // Pick up the per-room hard turn cap set by the chair (0 = none).
-            this.roomTurnLimit = Math.max(0, Math.floor(Number(msg.aiTurnLimit) || 0))
-
-            if (msg.clientId !== msg.centerId) {
-              this.armChannelTimeout()
-              await this.initPeer(msg.centerId, /* polite */ true)
-            } else {
-              // We are center (rare; server normally excludes bots). No PC needed.
-              this.relayEnabled = true
-            }
-
-            this.startHeartbeat()
-            resolve(this.session)
-            break
+            members: msg.members ?? [],
           }
+          this.centerId = msg.centerId
+          this.status = 'connected'
+          dlog(
+            `${lastClientId ? 'RE-joined' : 'joined'} room=${roomKey.toUpperCase()}`,
+            `clientId=${msg.clientId} center=${msg.centerId}`,
+            `members=${(msg.members ?? []).length} reconnectAttempts=${this.reconnectAttempts}`,
+          )
+          // Pick up the per-room hard turn cap set by the chair (0 = none).
+          this.roomTurnLimit = Math.max(0, Math.floor(Number(msg.aiTurnLimit) || 0))
 
-          case 'signal': {
-            await this.handleSignal(msg.from, msg.payload)
-            break
-          }
-
-          case 'relay': {
-            // First inbound relay frame: the room is operating in WS-relay
-            // mode (server-side fan-out). Mark enabled so outbound goes the
-            // same way and we don't fight a dead DataChannel.
+          if (msg.clientId !== msg.centerId) {
+            this.armChannelTimeout()
+            await this.initPeer(msg.centerId, /* polite */ true)
+          } else {
+            // Unreachable in practice: the signaling server guarantees a bot
+            // is never the centre (see signaling election.ts + rooms.ts
+            // addMember — both reject bots from the centerId slot). This
+            // branch is a defensive fallback only. It MUST stay unreachable
+            // while `onnegotiationneeded` below is a no-op: a bot centre
+            // would never send a WebRTC offer, so no DataChannel could
+            // negotiate. To ever allow AI-as-centre, restore the bot's offer
+            // capability in initPeer() first.
             this.relayEnabled = true
-            this.handleData(msg.from, msg.data, /* transport */ 'relay')
-            break
           }
 
-          case 'member_join': {
-            this.session?.members.push(msg.member)
-            // Surface to listeners + waiters so AIs running expert-panel
-            // scripts can react ("a new expert joined, brief them").
-            this.emitSystem(
-              `${msg.member?.nickname ?? msg.member?.clientId ?? 'A new member'} joined the room`,
-              msg.member?.nickname ?? 'system',
-            )
-            break
-          }
-
-          case 'member_left': {
-            if (this.session) {
-              this.session.members = this.session.members.filter(m => m.clientId !== msg.clientId)
-            }
-            // Surface to the AI as a system event so get_messages reflects it.
-            this.emitSystem(`${msg.nickname ?? msg.clientId} left the room`, msg.nickname ?? '')
-            break
-          }
-
-          case 'new_center': {
-            // Center changed (rotation / center dropped out). Tear down the
-            // old PC and dial the new center so messages keep flowing. The
-            // new center has already pre-registered every bot in its own
-            // relayPeers (frontend useRoom new_center handler), so we don't
-            // have to poke it ourselves.
-            const newCenterId = msg.centerId
-            if (!newCenterId) break
-            this.centerId = newCenterId
-            this.closePeer()
-            if (newCenterId !== this.session?.clientId) {
-              this.armChannelTimeout()
-              await this.initPeer(newCenterId, /* polite */ true)
-            }
-            this.emitSystem('Center node changed.', 'system')
-            break
-          }
-
-          case 'new_chair': {
-            // Informational only — bots aren't eligible.
-            this.emitSystem(`${msg.nickname ?? msg.chairId} is now the chairperson.`, 'system')
-            break
-          }
-
-          case 'room_config': {
-            // The chair updated the per-room hard turn cap (0 = unlimited).
-            // We surface a system message + a ROOM_LIMIT_REACHED sentinel once
-            // we're already past the new limit so any pending wait_for_mention
-            // wakes and the AI can leave on this turn.
-            const next = Math.max(0, Math.floor(Number(msg.aiTurnLimit) || 0))
-            const prev = this.roomTurnLimit
-            this.roomTurnLimit = next
-            if (next === 0) {
-              this.emitSystem('Chair removed the AI hard turn cap (now unlimited).', 'system')
-            } else {
-              this.emitSystem(
-                `Chair set the AI hard turn cap to ${next} (you have spoken ${this.sentCount}).`,
-                'system',
-              )
-            }
-            if (next > 0 && this.sentCount >= next && (prev === 0 || this.sentCount < prev || prev > next)) {
-              this.emitSystem(
-                `ROOM_LIMIT_REACHED: ${this.sentCount}/${next}. Stop sending and call leave_room.`,
-                'system',
-              )
-            }
-            break
-          }
-
-          case 'kicked': {
-            this.emitSystem('You were removed from the room by the chairperson.', 'system')
-            this.terminate('kicked')
-            break
-          }
-
-          case 'room_ended': {
-            this.emitSystem('The room was closed by the chairperson.', 'system')
-            this.terminate('room_ended')
-            break
-          }
-
-          case 'room_banned': {
-            this.emitSystem('This room is banned.', 'system')
-            this.terminate('room_banned')
-            // join() may still be pending — reject so callers get a clean error.
-            reject(new Error('room_banned'))
-            break
-          }
-
-          case 'error': {
-            // Surfaced verbatim to the MCP host. `protocol_version_mismatch`
-            // means this MCP build is incompatible with the signaling server —
-            // user must upgrade the MCP package. Others (rate_limited, room_full,
-            // bot_limit) are situational.
-            if (msg.code === 'protocol_version_mismatch') {
-              reject(
-                new Error(
-                  `protocol_version_mismatch: this MCP server speaks protocol v${PROTOCOL_VERSION} ` +
-                    `but the signaling server expects a different version. Upgrade the darkenchat MCP package.`,
-                ),
-              )
-            } else {
-              reject(new Error(`signaling error: ${msg.code}`))
-            }
-            break
-          }
+          this.startHeartbeat()
+          // Reset reconnect backoff after each successful join (initial or
+          // silent recovery). The initial path is already 0; this matters
+          // on reconnect.
+          this.reconnectAttempts = 0
+          resolve?.(this.session)
+          break
         }
-      })
 
-      this.ws.on('close', () => {
-        if (this.status === 'connected') this.terminate('disconnected')
-      })
-      this.ws.on('error', err => {
-        if (!this.session) reject(err)
-      })
+        case 'signal': {
+          await this.handleSignal(msg.from, msg.payload)
+          break
+        }
+
+        case 'relay': {
+          // First inbound relay frame: the room is operating in WS-relay
+          // mode (server-side fan-out). Mark enabled so outbound goes the
+          // same way and we don't fight a dead DataChannel.
+          this.relayEnabled = true
+          this.handleData(msg.from, msg.data, /* transport */ 'relay')
+          break
+        }
+
+        case 'member_join': {
+          this.session?.members.push(msg.member)
+          // Surface to listeners + waiters so AIs running expert-panel
+          // scripts can react ("a new expert joined, brief them").
+          this.emitSystem(
+            `${msg.member?.nickname ?? msg.member?.clientId ?? 'A new member'} joined the room`,
+            msg.member?.nickname ?? 'system',
+          )
+          break
+        }
+
+        case 'member_left': {
+          // Snapshot panel-chair status *before* the leaver is removed, so
+          // we can detect a handover to me on the next line. The panel
+          // chair is the earliest-joined bot in the room — when that bot
+          // leaves, the next-earliest bot silently inherits the role.
+          // Without this notification the inheritor would never know it
+          // had been promoted and would skip the chair duties (drive the
+          // discussion, write the round summary).
+          const wasChair = this.isChair()
+          if (this.session) {
+            this.session.members = this.session.members.filter(m => m.clientId !== msg.clientId)
+          }
+          const amChairNow = this.isChair()
+          // Surface to the AI as a system event so get_messages reflects it.
+          this.emitSystem(`${msg.nickname ?? msg.clientId} left the room`, msg.nickname ?? '')
+          if (!wasChair && amChairNow) {
+            this.emitSystem(
+              `You have been promoted to AI panel chairperson because ${msg.nickname ?? 'the previous chair'} ` +
+                `left the room. Take over chair duties now: coordinate the remaining AIs, drive the discussion, ` +
+                `and write the round summary when the panel agrees. Do NOT leave the room — the server emits ` +
+                `ROUND_COMPLETE on its own and the room stays open afterwards for the next topic.`,
+              'system',
+            )
+          }
+          break
+        }
+
+        case 'new_center': {
+          // Center changed (rotation / center dropped out). Tear down the
+          // old PC and dial the new center so messages keep flowing. The
+          // new center has already pre-registered every bot in its own
+          // relayPeers (frontend useRoom new_center handler), so we don't
+          // have to poke it ourselves.
+          const newCenterId = msg.centerId
+          if (!newCenterId) break
+          this.centerId = newCenterId
+          this.closePeer()
+          if (newCenterId !== this.session?.clientId) {
+            this.armChannelTimeout()
+            await this.initPeer(newCenterId, /* polite */ true)
+          }
+          this.emitSystem('Center node changed.', 'system')
+          break
+        }
+
+        case 'new_chair': {
+          // This is the *human* room chairperson (kick / end-room admin).
+          // Bots are never eligible for that role. The separate AI panel
+          // chair handover is announced from inside the member_left
+          // handler above — don't confuse the two.
+          this.emitSystem(`${msg.nickname ?? msg.chairId} is now the chairperson.`, 'system')
+          break
+        }
+
+        case 'room_config': {
+          // The chair updated the per-room hard turn cap (0 = unlimited).
+          // We surface a system message + a ROOM_LIMIT_REACHED sentinel once
+          // we're already past the new limit so any pending wait_for_mention
+          // wakes and the AI can leave on this turn.
+          const next = Math.max(0, Math.floor(Number(msg.aiTurnLimit) || 0))
+          const prev = this.roomTurnLimit
+          this.roomTurnLimit = next
+          if (next === 0) {
+            this.emitSystem('Chair removed the AI hard turn cap (now unlimited).', 'system')
+          } else {
+            this.emitSystem(`Chair set the AI hard turn cap to ${next} (you have spoken ${this.sentCount}).`, 'system')
+          }
+          if (next > 0 && this.sentCount >= next && (prev === 0 || this.sentCount < prev || prev > next)) {
+            this.emitSystem(
+              `ROOM_LIMIT_REACHED: ${this.sentCount}/${next}. Stop sending and call leave_room.`,
+              'system',
+            )
+          }
+          break
+        }
+
+        case 'kicked': {
+          dlog('received KICKED from signaling')
+          this.emitSystem('You were removed from the room by the chairperson.', 'system')
+          // Real terminal state — suppress the auto-reconnect that ws.on('close') would otherwise kick off.
+          this.intentionalShutdown = true
+          this.terminate('kicked')
+          break
+        }
+
+        case 'room_ended': {
+          dlog('received ROOM_ENDED from signaling')
+          this.emitSystem('The room was closed by the chairperson.', 'system')
+          this.intentionalShutdown = true
+          this.terminate('room_ended')
+          break
+        }
+
+        case 'room_banned': {
+          this.emitSystem('This room is banned.', 'system')
+          this.intentionalShutdown = true
+          this.terminate('room_banned')
+          // join() may still be pending — reject so callers get a clean error.
+          reject?.(new Error('room_banned'))
+          break
+        }
+
+        case 'error': {
+          // Surfaced to the MCP host. A few codes warrant a more actionable
+          // message; the rest pass through verbatim. All `error` codes from
+          // signaling are protocol-level rejections — never retry.
+          this.intentionalShutdown = true
+          if (msg.code === 'protocol_version_mismatch') {
+            reject?.(
+              new Error(
+                `protocol_version_mismatch: this MCP server speaks protocol v${PROTOCOL_VERSION} ` +
+                  `but the signaling server expects a different version. Upgrade the darkenchat MCP package.`,
+              ),
+            )
+          } else if (msg.code === 'no_humans_in_room') {
+            reject?.(
+              new Error(
+                `no_humans_in_room: this room has no human members. DarkenChat is built for ` +
+                  `human-led conversations, so AI bots cannot join an empty room or a room that ` +
+                  `only contains other bots. Ask the human who invited you to enter the room first, ` +
+                  `then retry join_room.`,
+              ),
+            )
+          } else {
+            reject?.(new Error(`signaling error: ${msg.code}`))
+          }
+          break
+        }
+
+        case 'ack': {
+          // Server-acked heartbeat. Updating this timestamp is what tells
+          // startHeartbeat the WS is still live (not silently half-open).
+          this.lastAckTime = Date.now()
+          break
+        }
+      }
+    })
+
+    this.ws.on('close', () => {
+      // Three cases:
+      //   1. Intentional shutdown (leave / kicked / room_ended / banned /
+      //      retry-exhausted) — already cleaned up, nothing to do.
+      //   2. Initial connect never completed (no session) — settle the
+      //      pending join Promise so the caller doesn't hang forever.
+      //   3. We had a working session and the socket just dropped — silent
+      //      reconnect (the whole point of this refactor). The AI's
+      //      wait_for_mention waiters stay alive; the AI never sees a fake
+      //      timeout or premature 'disconnected'. Transport-level retry is
+      //      decoupled from the AI's business loop.
+      dlog(`WS 'close' fired — intentionalShutdown=${this.intentionalShutdown} status=${this.status} hasSession=${!!this.session}`)
+      if (this.intentionalShutdown) return
+      if (!this.session) {
+        reject?.(new Error('signaling connection closed before join completed'))
+        return
+      }
+      this.scheduleReconnect()
+    })
+    this.ws.on('error', err => {
+      // Only meaningful before we have a session — after that, errors are
+      // surfaced through the eventual 'close' (and handled by reconnect).
+      if (!this.session) reject?.(err)
     })
   }
 
@@ -626,39 +788,49 @@ export class RoomClient {
       this.setupChannel(channel)
     }
 
-    // Always create a local channel — the center mirrors this from its end.
-    // Whoever's offer wins under perfect-negotiation drives the channel that
-    // ends up open; the loser's channel is dropped silently.
+    // Create a local channel so this side has something to send on once the
+    // SCTP transport is up. The center's offer negotiates that transport;
+    // our channel rides along on it (data channels added either side never
+    // need their own offer/answer once SCTP exists).
     const ch = this.pc.createDataChannel('chat')
     this.setupChannel(ch)
 
-    this.pc.onnegotiationneeded = async () => {
-      if (!this.pc) return
-      try {
-        this.makingOffer = true
-        await this.pc.setLocalDescription()
-        this.ws.send(
-          JSON.stringify({
-            type: 'signal',
-            roomKey: this.session!.roomKey,
-            to: centerId,
-            payload: { sdp: this.pc.localDescription },
-          }),
-        )
-      } catch {
-        /* swallow — handleSignal / armChannelTimeout will recover */
-      } finally {
-        this.makingOffer = false
-      }
+    // The bot is ALWAYS the polite peer in DarkenChat's star topology — the
+    // center is the impolite peer and the sole offerer. We deliberately do
+    // NOT send our own offer:
+    //   • createDataChannel above fires onnegotiationneeded; if we acted on
+    //     it we'd send an offer and collide with the center's offer (glare).
+    //   • The browser polite peer survives glare via *implicit rollback*
+    //     when setRemoteDescription(offer) is called in 'have-local-offer'.
+    //   • @roamhq/wrtc does NOT implement implicit rollback — the glare
+    //     surfaces as the "Failed to set remote offer sdp: Called in wrong
+    //     state: have-local-offer" error that wedged the PeerConnection.
+    // By never generating a local offer, the bot is never in
+    // 'have-local-offer', so the collision simply cannot happen. The center
+    // always offers; we always answer (see handleSignal).
+    this.pc.onnegotiationneeded = () => {
+      /* intentionally a no-op — see comment above. Bot answers, never offers. */
     }
 
-    // Failed PC → outbound relay fallback. The center pre-registered us in
-    // its relayPeers when we joined, so its chat fan-out already has a WS
-    // path to reach us; we just need to flip our own outbound to relay.
+    // Failed PC → outbound relay fallback + tear down. The center
+    // pre-registered us in its relayPeers when we joined, so its chat fan-out
+    // already has a WS path to reach us; we just need to flip our own
+    // outbound to relay AND free the dead PC so a later new_center or
+    // signal-driven re-init starts from a clean slate. Previously we only
+    // set relayEnabled; the stale PC would linger in 'failed', and its
+    // half-open DataChannel (`channel.readyState !== 'open'` but still
+    // referenced) confused the send path into "looks alive, isn't".
     this.pc.onconnectionstatechange = () => {
       const st = this.pc?.connectionState
       if (st === 'failed' || st === 'closed') {
         this.relayEnabled = true
+        // Defer closePeer to the next tick — closing inside the state-change
+        // event itself is asking for re-entrant trouble in some wrtc builds.
+        setTimeout(() => {
+          if (this.pc?.connectionState === 'failed' || this.pc?.connectionState === 'closed') {
+            this.closePeer()
+          }
+        }, 0)
       }
     }
   }
@@ -751,6 +923,7 @@ export class RoomClient {
       mentions: mentions.length ? mentions : undefined,
       mentionedMe: mentionedMe || undefined,
       transport,
+      stance: parseStance(parsed.stance),
     }
     this.pushHistory(out)
     for (const fn of this.listeners) fn(out)
@@ -766,34 +939,65 @@ export class RoomClient {
   // Perfect-negotiation receiver. The polite peer (us) defers on offer glare
   // by accepting the remote offer and rolling back its own; the impolite peer
   // (center) ignores collisions. Mirrors the pattern in frontend useWebRTC.
+  //
+  // The whole body is wrapped in try/catch because this runs inside the
+  // unawaited `ws.on('message', async …)` listener — an uncaught rejection
+  // here would bubble up as `unhandledRejection` and (Node 15+) tear down
+  // the MCP process, dropping all six tools from the host's tool list.
+  // Failing this signal soft is correct: the channel-open timeout
+  // (armChannelTimeout) will flip us to WS-relay if the negotiation never
+  // completes, so the bot stays usable instead of vanishing.
   private async handleSignal(fromId: string, payload: any) {
-    if (!this.pc) await this.initPeer(fromId, /* polite */ true)
-    const pc = this.pc!
+    try {
+      if (!this.pc) await this.initPeer(fromId, /* polite */ true)
+      const pc = this.pc!
 
-    if (payload.sdp) {
-      const offerCollision = payload.sdp.type === 'offer' && (this.makingOffer || pc.signalingState !== 'stable')
-      const ignoreOffer = !this.polite && offerCollision
-      if (ignoreOffer) return
+      if (payload.sdp) {
+        const offerCollision = payload.sdp.type === 'offer' && (this.makingOffer || pc.signalingState !== 'stable')
+        const ignoreOffer = !this.polite && offerCollision
+        if (ignoreOffer) return
 
-      await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp))
-      if (payload.sdp.type === 'offer') {
-        await pc.setLocalDescription()
-        this.ws.send(
-          JSON.stringify({
-            type: 'signal',
-            roomKey: this.session!.roomKey,
-            to: fromId,
-            payload: { sdp: pc.localDescription },
-          }),
-        )
+        await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp))
+        if (payload.sdp.type === 'offer') {
+          // Explicit createAnswer + setLocalDescription(answer) — see comment
+          // on the matching call inside onnegotiationneeded for the @roamhq/wrtc
+          // incompatibility this works around.
+          const answer = await pc.createAnswer()
+          await pc.setLocalDescription(answer)
+          this.ws.send(
+            JSON.stringify({
+              type: 'signal',
+              roomKey: this.session!.roomKey,
+              to: fromId,
+              payload: { sdp: pc.localDescription },
+            }),
+          )
+        }
       }
-    }
-    if (payload.candidate) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(payload.candidate))
-      } catch {
-        /* stale */
+      if (payload.candidate) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(payload.candidate))
+        } catch {
+          /* stale */
+        }
       }
+    } catch (err) {
+      // Fail soft + self-heal. Just emitting a system message used to leave
+      // the PeerConnection wedged (e.g. stuck in 'have-local-offer' after a
+      // setRemoteDescription clash) — the report's "2 hours pseudo-online,
+      // send_message reports success but messages never arrive" came from
+      // exactly that state. So we also:
+      //   • close the half-dead PC (frees resources, stops emitting bad ICE)
+      //   • flip outbound to WS-relay so the next send_message uses that
+      //     path instead of writing into a closed DataChannel
+      // The channel-open timeout / new_center signal will eventually drive
+      // a fresh PC build if peer-side conditions improve; until then, relay
+      // keeps the room functional.
+      const detail = err instanceof Error ? err.message : String(err)
+      dlog(`signal_failed: ${detail} — closing PC, falling back to relay`)
+      this.emitSystem(`signal_failed: ${detail}`, 'system')
+      this.closePeer()
+      this.relayEnabled = true
     }
   }
 
@@ -814,21 +1018,32 @@ export class RoomClient {
     // synthetic system message we emit on consensus.
   }
 
-  // Detects auto-CONSENSUS after every inbound chat message. Fires once.
-  // Definition: ≥75% of *all* AI members in the room have, in their latest
-  // structured message, the same normalised POSITION. The synthetic system
-  // message ("CONSENSUS: <position>") wakes every waiter and signals the
-  // panel to leave_room.
+  // Detects auto round-completion after every inbound chat message. Fires
+  // at most once per *distinct converged position*. Definition: ≥75% of all
+  // AI members in the room share, in their latest stance, the same
+  // normalised POSITION. The synthetic system message ("ROUND_COMPLETE: …")
+  // wakes every waiter and signals the panel that *this round* is done — it
+  // does NOT signal exit; the room stays open for the next topic. If the
+  // panel later converges on a *different* position, the guard re-arms and
+  // a fresh ROUND_COMPLETE fires — that's how multi-topic panels work, with
+  // no round counter to maintain. AIs are instructed (see tools.ts
+  // AGENT_RULES) to acknowledge briefly and keep polling.
   private maybeEmitConsensus() {
-    if (this.consensusEmitted) return
     if (!this.session) return
     const tally = computeTally(this.history, this.session.members)
     if (tally.totalAiMembers < 2) return
     const top = tally.stances[0]
     if (!top) return
     if (top.supporters.length < tally.consensusThreshold) return
-    this.consensusEmitted = true
-    this.emitSystem(`CONSENSUS: ${top.examplePosition}`, 'system')
+    if (top.positionNorm === this.lastConvergedPosition) return
+    this.lastConvergedPosition = top.positionNorm
+    this.emitSystem(
+      `ROUND_COMPLETE: panel converged on: ${top.examplePosition}. The room stays open. ` +
+        `If you have a final addition or correction, send it now; otherwise reply briefly with ` +
+        `"Confirmed, no further comments" and keep polling for the next topic or follow-up. ` +
+        `Do NOT leave_room — only leave on terminal roomStatus or an explicit request from the human.`,
+      'system',
+    )
   }
 
   // Resolves any pending long-poll waiters whose matcher accepts this message.
@@ -851,6 +1066,7 @@ export class RoomClient {
 
   private terminate(status: Exclude<RoomStatus, 'connecting' | 'connected'>) {
     if (!this.isActive()) return
+    dlog(`terminate(${status}) — was status=${this.status}`)
     this.status = status
     if (this.hbTimer) {
       clearInterval(this.hbTimer)
@@ -957,11 +1173,32 @@ export class RoomClient {
   }
 
   private startHeartbeat() {
+    // Reset the ack clock on (re)connect. Without this, a fresh post-reconnect
+    // heartbeat loop would inherit a stale lastAckTime from the previous
+    // session and immediately trip the wedged-WS check.
+    this.lastAckTime = Date.now()
     this.hbTimer = setInterval(() => {
+      // Detect a wedged WebSocket *before* sending the next heartbeat. If
+      // the server hasn't ack'd anything in HEARTBEAT_ACK_TIMEOUT_MS (~3
+      // missed heartbeats), the connection is "pseudo-online" — TCP layer
+      // is still ESTAB but no app traffic is flowing. Force-close so the
+      // existing silent-reconnect path takes over. This is the precise
+      // remedy for the report's "2 hours stuck, send_message returns
+      // success but nothing arrives" symptom.
+      const ackAge = Date.now() - this.lastAckTime
+      if (ackAge > HEARTBEAT_ACK_TIMEOUT_MS) {
+        dlog(`heartbeat: no ack for ${ackAge}ms (limit ${HEARTBEAT_ACK_TIMEOUT_MS}) — closing WS to force reconnect`)
+        try {
+          this.ws?.close()
+        } catch {
+          /* ignore — ws.on('close') will fire and trigger scheduleReconnect */
+        }
+        return
+      }
       try {
         this.ws.send(JSON.stringify({ type: 'heartbeat' }))
-      } catch {
-        /* ignore */
+      } catch (e) {
+        dlog(`heartbeat send failed: ${e instanceof Error ? e.message : String(e)} (ws.readyState=${this.ws?.readyState})`)
       }
     }, HEARTBEAT_MS)
   }
@@ -985,8 +1222,10 @@ export class RoomClient {
       result.convergeNotice =
         `[MCP system notice] You have now spoken ${this.sentCount} turns ` +
         `(reminder fires every ${CONVERGE_TURNS}). Start converging the discussion: ` +
-        `focus on the core conclusion, stop restating, and — if you are the chairperson — ` +
-        `move to summarise and declare CONSENSUS as soon as possible.`
+        `focus on the core conclusion and stop restating. If you are the chairperson, ` +
+        `write the round summary now. Do NOT leave the room — the server emits ` +
+        `ROUND_COMPLETE on its own once ≥75% of AIs share the same position, and the ` +
+        `room stays open after that for the next topic.`
     }
     return result
   }
@@ -996,7 +1235,11 @@ export class RoomClient {
   // CONVERGE_TURNS — see buildSendResult. However if the chair has set a
   // per-room hard cap (`roomTurnLimit > 0`), sending is hard-refused once the
   // count reaches it — the AI must leave_room immediately.
-  sendMessage(content: string, mentions?: MentionRef[]): SendOk | { ok: false; error: string } {
+  sendMessage(
+    content: string,
+    mentions?: MentionRef[],
+    stance?: MessageStance,
+  ): SendOk | { ok: false; error: string } {
     if (!this.session) return { ok: false, error: 'Not joined' }
     if (!this.isActive()) return { ok: false, error: `Room status: ${this.status}` }
     if (this.roomTurnLimit > 0 && this.sentCount >= this.roomTurnLimit) {
@@ -1018,13 +1261,36 @@ export class RoomClient {
       timestamp: Date.now(),
       roomKey: this.session.roomKey,
       isBot: true,
+      // The structured stance rides in the message payload alongside content.
+      // Every peer (incl. other bots' MCP) buffers it; tally reads it directly.
+      ...(stance ? { stance } : {}),
     }
     const raw = JSON.stringify(msg)
+
+    const onSent = (transport: 'p2p' | 'relay'): SendOk => {
+      // Record our own message in our local history. The center fans out to
+      // *other* peers (exceptId = us), so our own message never comes back
+      // via handleData — without this, computeTally run on our own buffer
+      // would miss our own stance. Re-check round-completion afterwards so
+      // our own stance can be the one that completes the panel.
+      this.pushHistory({
+        from: this.session!.nickname,
+        fromId: this.session!.clientId,
+        timestamp: msg.timestamp,
+        content,
+        isSystem: false,
+        transport,
+        stance,
+      })
+      const result = this.buildSendResult(transport, msg.id, msg.timestamp)
+      this.maybeEmitConsensus()
+      return result
+    }
 
     if (this.channel?.readyState === 'open') {
       try {
         this.channel.send(raw)
-        return this.buildSendResult('p2p', msg.id, msg.timestamp)
+        return onSent('p2p')
       } catch {
         /* fall through to relay */
       }
@@ -1036,7 +1302,7 @@ export class RoomClient {
       this.relayEnabled = true
       try {
         this.ws.send(JSON.stringify({ type: 'relay', to: this.centerId, data: raw }))
-        return this.buildSendResult('relay', msg.id, msg.timestamp)
+        return onSent('relay')
       } catch (e: any) {
         return { ok: false, error: `relay send failed: ${e?.message ?? e}` }
       }
@@ -1056,7 +1322,12 @@ export class RoomClient {
    * already present.
    *
    * Matcher = (mentions me) OR (isSystem && includeSystem).
-   * `since` lets callers avoid getting the same backlog twice.
+   * `since` lets callers avoid getting the same backlog twice — they SHOULD
+   * always pass it. The hard cap below is just a safety net for callers that
+   * don't: without it, an AI that polls without `since` after a long
+   * conversation would pull all matching backlog (up to HISTORY_CAP = 500
+   * messages) into the host's conversation context every single time,
+   * burning tokens for no reason.
    */
   waitForMention(timeoutMs: number, since: number | undefined, includeSystem: boolean): Promise<IncomingMessage[]> {
     const matcher = (m: IncomingMessage) => {
@@ -1065,7 +1336,8 @@ export class RoomClient {
       if (includeSystem && m.isSystem) return true
       return false
     }
-    const existing = this.history.filter(matcher)
+    // Last-50 cap on the synchronous backlog return — see method docstring.
+    const existing = this.history.filter(matcher).slice(-50)
     if (existing.length > 0) return Promise.resolve(existing)
     if (!this.isActive()) return Promise.resolve([])
 
@@ -1084,7 +1356,72 @@ export class RoomClient {
   }
 
   leave() {
+    dlog('leave() called — explicit shutdown')
+    // Explicit shutdown — suppress the reconnect loop that ws.on('close')
+    // would otherwise trigger when we close the socket below.
+    this.intentionalShutdown = true
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
     this.terminate('disconnected')
     this.session = null
+  }
+
+  // Silent reconnect on transient WebSocket loss. Tears down the now-dead
+  // peer connection + heartbeat, parks the status at 'connecting' (NOT
+  // 'disconnected' — the AI never sees a terminal state from a hiccup), then
+  // re-opens the WebSocket with exponential backoff. Pending
+  // wait_for_mention waiters are deliberately NOT resolved here — they keep
+  // hanging until either a real message arrives after reconnect or their own
+  // timeoutMs elapses (returning the same `{ keepalive: true }` frame the AI
+  // would see for a quiet room). Only after MAX_RECONNECT_ATTEMPTS does this fall
+  // through to a real terminate('disconnected'), with a system message so
+  // the AI knows the room is finally unreachable.
+  private scheduleReconnect(): void {
+    if (this.intentionalShutdown) return
+    if (!this.session || !this.serverUrl) {
+      this.intentionalShutdown = true
+      this.terminate('disconnected')
+      return
+    }
+    // Tear down stale transport plumbing. Waiters stay untouched.
+    this.closePeer()
+    if (this.hbTimer) {
+      clearInterval(this.hbTimer)
+      this.hbTimer = null
+    }
+    this.status = 'connecting'
+
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      dlog(`scheduleReconnect — exhausted ${MAX_RECONNECT_ATTEMPTS} attempts, giving up`)
+      this.emitSystem(
+        `Signaling connection lost and ${MAX_RECONNECT_ATTEMPTS} reconnect attempts failed. ` +
+          `Giving up — call leave_room.`,
+        'system',
+      )
+      this.intentionalShutdown = true
+      this.terminate('disconnected')
+      return
+    }
+
+    const delay = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempts)
+    this.reconnectAttempts++
+    dlog(`scheduleReconnect — attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${delay}ms`)
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      if (this.intentionalShutdown || !this.session) return
+      try {
+        // Re-use the same code path as the initial connect, but with
+        // `lastClientId` so the server recognises us as a returning member
+        // and we keep our existing clientId. No resolve/reject — the
+        // original join() Promise was already settled on first connect.
+        this.openWsAndJoin(this.session.roomKey, this.nickname, this.session.clientId, undefined, undefined)
+      } catch {
+        // openWsAndJoin synchronously throwing (e.g. WebSocket ctor) → bounce
+        // back into the backoff loop.
+        this.scheduleReconnect()
+      }
+    }, delay)
   }
 }

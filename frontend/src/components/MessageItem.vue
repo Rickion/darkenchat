@@ -5,6 +5,7 @@ import dayjs from 'dayjs'
 import type { Message, FileMeta, VoiceSessionMeta } from '@/types'
 import { useFilesStore } from '@/stores/files'
 import { useVoiceStore } from '@/stores/voice'
+import { useRoomStore } from '@/stores/room'
 import { AUTO_FETCH_SIZE } from '@/composables/useRoom'
 import { MENTION_ALL_ID, MENTION_ALL_AI_ID } from '@/_shared/mentions'
 
@@ -33,8 +34,19 @@ const emit = defineEmits<{
 const expanded = ref(false)
 const filesStore = useFilesStore()
 const voiceStore = useVoiceStore()
+const roomStore = useRoomStore()
 
 const time = computed(() => dayjs(props.message.timestamp).format('HH:mm'))
+
+// ─── Expert-panel stance ──────────────────────────────────
+// AI members may attach a structured stance (position + agree/disagree by
+// clientId). We resolve the clientIds to nicknames for display.
+function nicksOf(ids?: string[]): string {
+  if (!ids || ids.length === 0) return ''
+  return ids.map(id => roomStore.members.find(m => m.clientId === id)?.nickname ?? id.slice(0, 6)).join(', ')
+}
+const stanceAgree = computed(() => nicksOf(props.message.stance?.agreeWith))
+const stanceDisagree = computed(() => nicksOf(props.message.stance?.disagreeWith))
 const isMine = computed(() => props.message.fromId === props.clientId)
 
 // ─── Mention highlighting ─────────────────────────────────
@@ -407,6 +419,17 @@ function onFileCardClick() {
         class="select-cb"
         @click.stop
         @update:model-value="emit('toggle', message.id)" />
+      <!-- Expert-panel stance (structured field from the MCP send_message tool) -->
+      <div v-if="message.stance" class="stance-box">
+        <div class="stance-position">
+          <v-icon size="11" class="stance-icon">mdi-flag-variant-outline</v-icon>
+          {{ message.stance.position }}
+        </div>
+        <div v-if="stanceAgree || stanceDisagree" class="stance-rel">
+          <span v-if="stanceAgree" class="stance-agree">▲ {{ stanceAgree }}</span>
+          <span v-if="stanceDisagree" class="stance-disagree">▼ {{ stanceDisagree }}</span>
+        </div>
+      </div>
       <div class="msg-content" v-html="renderedContent" />
     </div>
   </div>
@@ -492,6 +515,44 @@ function onFileCardClick() {
   font-size: 0.92rem;
   line-height: 1.5;
   word-break: break-word;
+}
+/* ── Expert-panel stance strip ── */
+.stance-box {
+  margin-bottom: 5px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-left: 2px solid var(--dc-teal);
+  font-size: 0.78rem;
+}
+.chat-msg.mine .stance-box {
+  background: rgba(0, 0, 0, 0.07);
+}
+.stance-position {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+.chat-msg.mine .stance-position {
+  color: #1a1a1a;
+}
+.stance-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.stance-rel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 0.72rem;
+}
+.stance-agree {
+  color: #4caf50;
+}
+.stance-disagree {
+  color: #ef5350;
 }
 .chat-msg.mine .msg-content {
   color: #1a1a1a;

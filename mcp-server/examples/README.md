@@ -14,7 +14,7 @@ examples/
 The role-prompt and launcher subdirectories are intentionally empty in the repo —
 they exist as drop-in slots. Author your own role prompts (one per persona) and
 launcher scripts following the protocol below; the MCP server, `tally_positions`
-and auto-CONSENSUS work regardless of how many personas you wire up.
+and auto-ROUND_COMPLETE work regardless of how many personas you wire up.
 
 ## End-to-end flow
 
@@ -43,26 +43,30 @@ The binding rules (summarised below) — point every role prompt at this section
 
 1. **Greeting** — every persona sends one structured greeting on join.
 2. **Parallel response** — the human's question `@`-mentions everyone; each expert wakes via `wait_for_mention` and replies **in parallel** — no serial routing required.
-3. **Structured replies.** Every chat message starts with a fixed header:
+3. **Structured stance.** When a chat message takes a position, pass the
+   `send_message` tool's optional `stance` object — do NOT write any header
+   into `content`:
+   ```jsonc
+   stance: {
+     position: "Use Redis for the cache layer",   // free text
+     agreeWith:    ["<clientId>", "<clientId>"],   // clientIds, NOT @nicknames
+     disagreeWith: ["<clientId>"],
+   }
    ```
-   ROUND: <n>
-   POSITION: <one-line proposal>
-   AGREE_WITH: @A, @B  (or none)
-   DISAGREE_WITH: @C   (or none)
-   REASON: <≤3 sentences>
+   `content` is just your prose. The server tallies `stance` structurally —
+   there is no regex, no free-text header, and `agreeWith`/`disagreeWith`
+   reference clientIds so nicknames / dedup suffixes can never break it.
+4. **Tally + yield.** Before each reply, every AI calls `tally_positions`. If `myStance.shouldYield` is true (≥majority of peers list you in `disagreeWith`), you **must** change your `position` — either adopt the leading stance or synthesise.
+5. **Auto round-completion.** When any normalised `position` reaches `consensusThreshold` supporters (default ⌈75% of AI members⌉), the MCP server itself emits a synthetic system message:
    ```
-4. **Tally + yield.** Before each reply, every AI calls `tally_positions`. If `myStance.shouldYield` is true (≥majority of peers list you in `DISAGREE_WITH`), you **must** change `POSITION` this round — either adopt the leading stance or synthesise.
-5. **Auto-CONSENSUS.** When any normalised `POSITION` reaches `consensusThreshold` supporters (default ⌈75% of AI members⌉), the MCP server itself emits a synthetic system message:
+   ROUND_COMPLETE: panel converged on: <position>. The room stays open. …
    ```
-   CONSENSUS: <position>
-   ```
-   This wakes every panellist's `wait_for_mention` — all of them call `leave_room`.
+   This wakes every panellist's `wait_for_mention`. **It is NOT a stop-signal** — panellists should acknowledge briefly (e.g. send `"Confirmed, no further comments"`) and keep polling. The room stays open for the next topic. There are no round numbers: to move on, simply discuss a new topic — once the panel converges on a *different* `position`, ROUND_COMPLETE re-fires for that one.
 6. **Fail-safes** (no human babysitting required):
    - Convergence reminder (`DARKENCHAT_CONVERGE_TURNS`, default 12). There is **no hard send cap** — on every multiple of this threshold (turn 12, 24, 36, …) the AI's `send_message` result carries a `convergeNotice` nudging it to wrap up. It does not block sending.
-   - Same-POSITION repeats are capped at 2 rounds by the role prompt.
-   - Moderator / chairperson can manually emit `CONSENSUS:` as best-effort if no auto-convergence happens.
+   - The human chairperson (or any human in the room) can ask the panel to end explicitly — that's the only termination path beyond `leave_room` on terminal `roomStatus`.
 
-The `CONSENSUS:` token is the only stop-signal. Pick a different sentinel if your domain might collide with that word — change it in your role prompts _and_ in `room.ts:maybeEmitConsensus`.
+The `ROUND_COMPLETE:` system message is round-end, **not** exit — panellists acknowledge and keep polling. The server emits it on its own; AIs never declare round-completion themselves. If you need a different round-end sentinel (e.g. a domain collision with `ROUND_COMPLETE`), change it in `room.ts:maybeEmitConsensus`.
 
 ## Things to tune
 
@@ -80,7 +84,8 @@ The `CONSENSUS:` token is the only stop-signal. Pick a different sentinel if you
 | `bot_limit` from `join_room`                     | Raise `room.max_bot_members` in signaling config.                                                                                                       |
 | AI responds to messages not addressed to it      | Role prompt isn't gating on `mentionedMe`. Re-emphasise rule 3 in the role file.                                                                        |
 | Two experts respond simultaneously and overlap   | Tighten the moderator prompt to `@` one expert at a time, or stagger by sleep.                                                                          |
-| Loop never terminates                            | Check `CONSENSUS:` sentinel casing. Add a hard round cap.                                                                                               |
-| `wait_for_mention` returns _immediately_, empty  | `roomStatus` already terminal — call `leave_room` and exit. (Returning empty only _after the full timeout_ is normal — just call it again, don't stop.) |
-| AI joins then stops after one `wait_for_mention` | Host treated a timeout as "done". Re-emphasise: loop on `wait_for_mention`; `timedOut: true` means "keep waiting", not "leave".                         |
+| Loop never terminates                            | Loops are SUPPOSED to keep running until the human asks them to stop. If a human explicitly says "leave the room" and the AI ignores it, tighten the role prompt to honour that. `ROUND_COMPLETE` is NOT a stop signal.                                                                                                |
+| AI leaves the room as soon as `ROUND_COMPLETE:` arrives | Role prompt is treating `ROUND_COMPLETE:` as an exit signal. It's not — it just marks this round's end. Update the prompt to acknowledge + keep polling.                                                                                                  |
+| `wait_for_mention` returns a `{ keepalive: true }` frame | Normal — that's a transport-level frame, not a business event. Call `wait_for_mention` again with the same args. (A `{ keepalive: true }` only ever means "nothing happened in this window yet".) |
+| AI joins then stops after one `wait_for_mention` | Host treated a `{ keepalive: true }` frame as "done". Re-emphasise: loop on `wait_for_mention`; a keepalive frame means "keep waiting", not "leave".    |
 | Replies arrive but no mention chip is rendered   | Pass `mentions: [{clientId, nickname}]` explicitly — auto-detection misses names with spaces or punctuation.                                            |

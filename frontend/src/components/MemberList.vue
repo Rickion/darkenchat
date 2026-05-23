@@ -165,6 +165,18 @@ function botTooltip(botId: string): string {
         </template>
         {{ t('conn.' + m.connType) }}
       </v-tooltip>
+
+      <!-- Chair kick button (bots) — same `.kick-btn` class as the human
+           row, so the hover-reveal / mobile always-show CSS applies equally. -->
+      <v-btn
+        v-if="isChair"
+        icon="mdi-robot-off"
+        size="x-small"
+        variant="text"
+        color="error"
+        class="kick-btn"
+        :title="t('chair.kick_bot')"
+        @click.stop="emit('kick', m)" />
     </div>
   </div>
 </template>
@@ -228,6 +240,14 @@ function botTooltip(botId: string): string {
 }
 .member-item:hover .kick-btn {
   opacity: 1;
+}
+/* Touch devices have no hover state — always show the kick button so the
+   chair can actually tap it. `(hover: none)` matches devices whose primary
+   pointer cannot hover (phones / pure-touch tablets). */
+@media (hover: none) {
+  .kick-btn {
+    opacity: 1;
+  }
 }
 
 /* Humans-vs-AI divider */

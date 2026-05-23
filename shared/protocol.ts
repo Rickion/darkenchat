@@ -2,11 +2,26 @@
 // server. Anything that goes over the WebSocket lives here so the type
 // constraint is enforced on both ends of the wire.
 //
-// Bump PROTOCOL_VERSION on any breaking change to message shapes. Clients
-// send it on `join`; the server rejects mismatches with `protocol_version_mismatch`
-// so a stale client gets a clear "please upgrade" error instead of silently
-// drifting into an incompatible state. Non-breaking additions (new optional
-// fields, new message types old peers can ignore) do NOT require a bump.
+// PROTOCOL_VERSION policy:
+//   • Every client MUST send `protocolVersion: PROTOCOL_VERSION` on `join`.
+//     The server enforces strict equality — missing field or different value
+//     is rejected with `protocol_version_mismatch` and the connection is
+//     refused before any room state is touched.
+//   • BUMP when you make a BREAKING change to wire formats — anything that
+//     would make a v(n-1) client misinterpret or fail to parse a v(n) server
+//     payload (or vice-versa). Examples that need a bump:
+//        - renaming, removing, or changing the type of an existing field
+//        - removing a message `type` that clients depend on
+//        - changing the semantics of a code (e.g. what `room_ended` means)
+//        - changing how `kicked` is dispatched (broadcast vs targeted)
+//   • DO NOT BUMP for purely additive changes that old clients ignore safely:
+//        - adding a new optional field with a sensible "absent" default
+//        - adding a new message `type` (old clients just don't handle it)
+//        - server-internal changes that don't touch the wire
+//   • Bump = single digit increment (1 → 2 → 3 …). No semver here — every
+//     breaking change is the next integer. Cross-deploy upgrade ordering:
+//     deploy server first, then clients. Mid-deploy, mismatched clients get
+//     a clean "please upgrade" error instead of silent drift.
 export const PROTOCOL_VERSION = 1
 
 export interface MemberInfo {
@@ -28,7 +43,7 @@ export interface RTCSignal {
 
 // ─── Client → Server ────────────────────────────────────────
 export type C2S =
-  | { type: 'join';            roomKey: string; nickname: string; isBot?: boolean; lastClientId?: string; protocolVersion?: number }
+  | { type: 'join';            roomKey: string; nickname: string; protocolVersion: number; isBot?: boolean; lastClientId?: string }
   | { type: 'leave';           roomKey: string }
   | { type: 'signal';          roomKey: string; to: string; payload: RTCSignal }
   | { type: 'score';           roomKey: string; score: number }

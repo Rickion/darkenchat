@@ -24,6 +24,7 @@
     "nickname_label": "你的昵称",
     "nickname_hint": "点击骰子按钮获取随机昵称",
     "input_placeholder": "输入消息……",
+    "establishing_connection": "正在建立连接……",
     "join_as": "以 {nick} 加入",
     "create_as": "以 {nick} 创建",
     "members_count": "成员（{count}）",
@@ -90,7 +91,8 @@
     "close_room_tooltip": "为所有人关闭房间",
     "close_room_btn": "为所有人关闭",
     "remove_btn": "移除",
-    "kick_member": "移除成员"
+    "kick_member": "移除成员",
+    "kick_bot": "移除 AI"
   },
   "forward": {
     "title": "{name} 转发了 {count} 条消息",

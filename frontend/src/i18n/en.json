@@ -24,6 +24,7 @@
     "nickname_label": "Your nickname",
     "nickname_hint": "Click the dice button for a random nickname",
     "input_placeholder": "Type a message…",
+    "establishing_connection": "Establishing connection…",
     "join_as": "Join as {nick}",
     "create_as": "Create as {nick}",
     "members_count": "Members ({count})",
@@ -90,7 +91,8 @@
     "close_room_tooltip": "Close room for everyone",
     "close_room_btn": "Close for Everyone",
     "remove_btn": "Remove",
-    "kick_member": "Remove member"
+    "kick_member": "Remove member",
+    "kick_bot": "Remove AI"
   },
   "forward": {
     "title": "{name} forwarded {count} message(s)",
