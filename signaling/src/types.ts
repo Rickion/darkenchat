@@ -30,6 +30,13 @@ export interface Room {
   // When a bot's MCP-side send count reaches this, the MCP refuses further
   // send_message calls and instructs the bot to leave.
   aiTurnLimit: number
+  // Pending bots-only dissolve. When the last human drops *unexpectedly*
+  // (socket close / heartbeat sweep, not an explicit leave) we don't dissolve
+  // the room immediately — we hold it for a grace window so the human can
+  // reconnect (via lastClientId) and reclaim their place/center. A human
+  // (re)joining clears this; the timer firing re-checks and dissolves only if
+  // still bots-only.
+  dissolveTimer?: ReturnType<typeof setTimeout>
 }
 
 export interface SwitchLog {

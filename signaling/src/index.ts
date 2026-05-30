@@ -21,6 +21,8 @@ import {
   send,
   memberInfo,
   dissolveIfBotsOnly,
+  scheduleDissolveIfBotsOnly,
+  cancelDissolve,
   announceChairChange,
 } from './rooms.js'
 import { checkAndRecord, bannedKeys, configure as configureGuard } from './guard.js'
@@ -285,6 +287,43 @@ app.register(async fastify => {
 
           const room = getOrCreateRoom(key)
 
+          // Reconnect that BEAT the old socket's close event: the same client
+          // is still in the roster (lastClientId matches a current member).
+          // Take over the slot — swap in the new socket — instead of spawning a
+          // duplicate "nick-2" ghost. Bypasses the limit checks below (the
+          // member already counts) and skips the member_join broadcast (they're
+          // already in everyone's roster). centerId/chairId, which point at this
+          // clientId, are preserved, so the returning client keeps its role.
+          if (msg.lastClientId) {
+            const existingMember = room.members.get(msg.lastClientId)
+            if (existingMember) {
+              try {
+                if (existingMember.ws !== socket) existingMember.ws.close()
+              } catch {
+                /* old socket already dead */
+              }
+              existingMember.ws = socket
+              existingMember.lastSeen = Date.now()
+              currentRoomKey = key
+              currentClientId = existingMember.clientId
+              cancelDissolve(room)
+              socket.send(
+                JSON.stringify({
+                  type: 'joined',
+                  clientId: existingMember.clientId,
+                  nickname: existingMember.nickname,
+                  centerId: room.centerId,
+                  chairId: room.chairId,
+                  isReturning: true,
+                  nicknameSet: room.nicknameSet,
+                  aiTurnLimit: room.aiTurnLimit,
+                  members: [...room.members.values()].map(memberInfo),
+                }),
+              )
+              break
+            }
+          }
+
           // Bot limit
           if (msg.isBot) {
             const botCount = [...room.members.values()].filter(m => m.isBot).length
@@ -349,6 +388,10 @@ app.register(async fastify => {
 
           addMember(room, member)
 
+          // A (re)joining human cancels any pending bots-only dissolve so the
+          // room isn't torn down out from under them.
+          if (!member.isBot) cancelDissolve(room)
+
           // Send joined confirmation to new member
           socket.send(
             JSON.stringify({
@@ -378,7 +421,7 @@ app.register(async fastify => {
         }
 
         case 'leave': {
-          handleLeave()
+          handleLeave(true)
           break
         }
 
@@ -479,12 +522,31 @@ app.register(async fastify => {
       }
     })
 
-    socket.on('close', handleLeave)
+    // Socket close is NOT an intentional leave — it may be a transient network
+    // drop the client will auto-reconnect from, so it gets the dissolve grace.
+    socket.on('close', () => handleLeave(false))
 
-    function handleLeave() {
+    // `intentional` = the client sent an explicit `leave` (or the chair ended
+    // the room). Those dissolve a bots-only residue immediately. An unexpected
+    // socket close defers dissolution by a grace window so a reconnecting human
+    // can reclaim the room.
+    function handleLeave(intentional: boolean) {
       if (!currentRoomKey || !currentClientId) return
       const room = rooms.get(currentRoomKey)
       if (!room) return
+
+      // Stale-socket guard. A reconnect that BEAT this close (the takeover path
+      // in `join`) has already swapped the member's `ws` to a newer socket and
+      // closed THIS one — whose close event we're now handling. The member is
+      // alive on the new socket, so we must NOT remove it (doing so would evict
+      // the just-revived member and, if it was the center, trigger a spurious
+      // re-election). Bail unless the roster slot still points at this socket.
+      const current = room.members.get(currentClientId)
+      if (current && current.ws !== socket) {
+        currentRoomKey = null
+        currentClientId = null
+        return
+      }
 
       const prevChairId = room.chairId
       const member = removeMember(room, currentClientId)
@@ -499,8 +561,10 @@ app.register(async fastify => {
         announceChairChange(room, prevChairId)
         // If the leaver was the last human, shut the residue down so bots'
         // MCP loops terminate cleanly. Runs after the member_left broadcast
-        // so clients see leave → room_ended in that order.
-        dissolveIfBotsOnly(room)
+        // so clients see leave → room_ended in that order. Unexpected drops
+        // get a grace window; explicit leaves dissolve now.
+        if (intentional) dissolveIfBotsOnly(room)
+        else scheduleDissolveIfBotsOnly(room)
       }
 
       currentRoomKey = null
@@ -537,9 +601,10 @@ setInterval(() => {
           // every non-chair eviction (that was the old bug: it announced the
           // unchanged chair on every silent-member sweep).
           announceChairChange(room, prevChairId)
-          // Same human-required rule as the leave / kick paths — if eviction
-          // left the room with no humans, end it.
-          dissolveIfBotsOnly(room)
+          // Same human-required rule as the leave / kick paths — but a sweep
+          // eviction is an *unexpected* drop (silent socket death), so give
+          // the grace window for the human to reconnect before dissolving.
+          scheduleDissolveIfBotsOnly(room)
         }
       }
     }

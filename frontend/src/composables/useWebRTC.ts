@@ -3,7 +3,10 @@ import type { RTCSignal } from '@/types'
 type DataHandler = (fromId: string, data: string) => void
 type SignalSender = (to: string, payload: RTCSignal) => void
 type ChannelOpenCb = (peerId: string) => void
-type ChannelCloseCb = (peerId: string) => void
+// `lastSeenAt` is the last time we had proof this peer was alive (heartbeat
+// ack / inbound data). The room layer uses it to decide which of its own
+// recently-sent messages may have been lost into a now-dead channel.
+type ChannelCloseCb = (peerId: string, lastSeenAt: number) => void
 
 // STUN list comes from the server (/api/ice) so it stays in lock-step with
 // config.yaml — no hardcode to drift. The fetch happens once per page load
@@ -169,9 +172,10 @@ export function useWebRTC(
     ch.onclose = () => {
       // Guard: only evict if this is still the active channel
       if (channels.get(peerId) === ch) {
+        const seen = lastHb.get(peerId) ?? Date.now()
         channels.delete(peerId)
         lastHb.delete(peerId)
-        onChannelClose?.(peerId)
+        onChannelClose?.(peerId, seen)
       }
     }
   }
@@ -283,6 +287,7 @@ export function useWebRTC(
     // connected" until the user tried to send something.
     const ch = channels.get(peerId)
     if (ch) {
+      const seen = lastHb.get(peerId) ?? Date.now()
       try {
         ch.close()
       } catch {
@@ -290,7 +295,7 @@ export function useWebRTC(
       }
       channels.delete(peerId)
       lastHb.delete(peerId)
-      onChannelClose?.(peerId)
+      onChannelClose?.(peerId, seen)
     }
     peers.get(peerId)?.close()
     peers.delete(peerId)
@@ -317,5 +322,8 @@ export function useWebRTC(
     getIceServers,
     hasOpenChannel: (id: string) => channels.get(id)?.readyState === 'open',
     channelCount: () => channels.size,
+    // Last time we had proof `id` was alive (heartbeat ack / inbound data).
+    // 0 if unknown. Read this BEFORE closePeer, which clears the entry.
+    lastSeen: (id: string) => lastHb.get(id) ?? 0,
   }
 }

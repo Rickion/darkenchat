@@ -17,6 +17,14 @@ const CATCHUP_MAX_AGE_MS = 10 * 60 * 1000
 // Max number of messages in a catch-up bundle
 const CATCHUP_MAX_COUNT = 100
 
+// When the center DataChannel drops, give ICE/TURN reconnection (and center
+// re-election) this long to recover the link silently before concluding that
+// WS relay is the only remaining transport and prompting the user to downgrade
+// or leave. Transient network blips and TURN reconnects settle well within this
+// window; only a genuine downgrade-to-WS outlasts it. Without this grace the
+// dialog popped on every momentary drop even when P2P/TURN was about to recover.
+const RELAY_PROMPT_GRACE_MS = 8000
+
 // File transfer
 export const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5 MB
 // Files below this size are fetched eagerly the moment the file message lands
@@ -99,7 +107,35 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   // without degrading every peer to relay just because one is on WS.
   const relayPeers = new Set<string>()
 
+  // Deferred relay-consent prompt. A dropped center link starts this timer
+  // instead of prompting immediately; if the link recovers (P2P/TURN reconnect
+  // or center re-election) the timer is cleared and the user never sees the
+  // dialog. Only a link still down after the grace window fires the prompt.
+  let relayPromptTimer: ReturnType<typeof setTimeout> | null = null
+
+  function clearRelayPrompt() {
+    if (relayPromptTimer) {
+      clearTimeout(relayPromptTimer)
+      relayPromptTimer = null
+    }
+  }
+
+  function scheduleRelayPrompt() {
+    if (relayPromptTimer || relayEnabled !== null) return
+    relayPromptTimer = setTimeout(() => {
+      relayPromptTimer = null
+      // Re-check at fire time: only prompt if the center link is STILL down and
+      // the user hasn't already decided. If P2P/TURN recovered, re-election
+      // handed us a fresh center channel, or I became the center, there is
+      // nothing to downgrade — stay quiet.
+      if (relayEnabled !== null || roomStore.isCenter) return
+      if (roomStore.centerId && rtc.hasOpenChannel(roomStore.centerId)) return
+      onEvent({ event: 'relay_request' })
+    }, RELAY_PROMPT_GRACE_MS)
+  }
+
   function confirmRelay(allow: boolean) {
+    clearRelayPrompt()
     relayEnabled = allow
     if (allow) {
       for (const [id, raw] of relayQueue) {
@@ -164,6 +200,9 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       // pending "use server relay?" dialog so the user is no longer asked.
       relayPeers.delete(peerId)
       if (peerId === roomStore.centerId && relayEnabled === null) {
+        // The center link recovered within the grace window — cancel any
+        // pending relay prompt so the user is never asked to downgrade.
+        clearRelayPrompt()
         if (relayQueue.length > 0) {
           for (const [id, raw] of relayQueue) {
             if (rtc.hasOpenChannel(id)) rtc.sendTo(id, raw)
@@ -193,10 +232,20 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       // for the user to send a doomed message and discover it themselves.
       // If P2P/center re-election recovers first, p2p_recovered / new_center
       // will dismiss the dialog.
+      //
+      // Note: we do NOT fail recent outgoing messages here. A bare channel
+      // close is ambiguous — the center may merely have a flaky P2P link while
+      // still alive, in which case the relay fallback above delivers them.
+      // Messages are only declared failed once the *server* confirms the
+      // center actually left (see `member_left`, wasCenter), where relay to it
+      // is impossible.
       if (peerId === roomStore.centerId) {
         if (connStore.state !== 'relay') connStore.state = 'connecting'
         roomStore.reconnecting = true
-        if (relayEnabled === null) onEvent({ event: 'relay_request' })
+        // Don't prompt immediately: let ICE/TURN reconnection (or re-election)
+        // try to recover first. Only if the link is still down after the grace
+        // window do we conclude WS relay is the only option and prompt.
+        if (relayEnabled === null) scheduleRelayPrompt()
       }
     },
   )
@@ -296,14 +345,26 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
           `isBot=${!!leftMember?.isBot} wasCenter=${msg.clientId === roomStore.centerId}`,
         )
         const wasCenter = msg.clientId === roomStore.centerId
+        // Capture when we last heard from the center BEFORE closePeer clears
+        // it — used to decide which of my own messages died in the gap.
+        const centerSeenAt = wasCenter ? rtc.lastSeen(msg.clientId) : 0
         // Set reconnecting immediately so UI disables send/resend
-        if (wasCenter) roomStore.reconnecting = true
+        if (wasCenter) {
+          roomStore.reconnecting = true
+          // Center is confirmed gone — WS relay to it is impossible anyway, so
+          // a pending "relay to center?" prompt is moot. Re-election follows.
+          clearRelayPrompt()
+        }
         roomStore.removeMember(msg.clientId)
         rtc.closePeer(msg.clientId)
         relayPeers.delete(msg.clientId)
         voice.onMemberLeftRoom(msg.clientId)
         addSystemMessage('system.leave', { name: msg.nickname })
         if (wasCenter) {
+          // The center is confirmed gone (relay to it is now impossible), so
+          // any message I sent after we last heard from it never got
+          // forwarded — flag it failed so the resend button appears.
+          failUndeliveredToCenter(centerSeenAt)
           signaling.send({
             type: 'score',
             roomKey: roomStore.key,
@@ -318,6 +379,9 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         roomStore.updateCenter(msg.centerId)
         roomStore.reconnecting = true
         connStore.state = 'connecting'
+        // Re-election supersedes any pending relay prompt for the old center;
+        // the fresh link gets its own grace window if it also fails.
+        clearRelayPrompt()
         // Center rotation invalidates all per-peer relay decisions — peer
         // relationships are reset and every link must be renegotiated.
         relayPeers.clear()
@@ -388,6 +452,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         }
         if (relayEnabled === null) {
           relayEnabled = true
+          clearRelayPrompt()
           // Flip the local privacy banner only when the relay link is *mine*
           // — i.e. I'm a non-center peer talking to center via WS. The
           // center receiving a relay frame from one peer keeps its banner
@@ -440,7 +505,25 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         break
       }
     }
-  })
+  }, onSignalingReconnected)
+
+  // Fired by useSignaling after the *signaling control channel* reopens
+  // following an unexpected drop (server restart, network blip). The data
+  // mesh (P2P/TURN/relay) is unaffected and rebuilds on its own; here we just
+  // re-announce ourselves so the server re-attaches us to the room. The
+  // `lastClientId` lets it recognise us as a returning member (within its
+  // dissolve-grace window) rather than a brand-new joiner.
+  function onSignalingReconnected() {
+    if (!roomStore.key || !roomStore.nickname) return
+    const lastClientId = roomStore.clientId || undefined
+    signaling.send({
+      type: 'join',
+      roomKey: roomStore.key,
+      nickname: roomStore.nickname,
+      lastClientId,
+      protocolVersion: PROTOCOL_VERSION,
+    })
+  }
 
   // ──────────────────────────────────────────────
   // Send to one member — P2P preferred, relay fallback (with user consent).
@@ -457,19 +540,44 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
     // dialog is required because the center never *generates* a relay link
     // — it only mirrors the joiner's decision to use WS for itself.
     if (roomStore.isCenter && relayPeers.has(memberId)) {
+      // Relay rides the signaling channel; if it's down the frame would be
+      // silently dropped (signaling.send no-ops when not OPEN), so report
+      // failure instead of a false success.
+      if (!signaling.connected.value) return false
       signaling.send({ type: 'relay', to: memberId, data: raw })
       return true
     }
     if (relayEnabled === true) {
+      if (!signaling.connected.value) return false
       signaling.send({ type: 'relay', to: memberId, data: raw })
       return true
     }
     if (relayEnabled === null && !roomStore.isCenter) {
+      // Hold the message and let the grace window decide: if P2P/TURN recovers
+      // it flushes over the channel (onChannelOpen); only if the link stays
+      // down does the timer prompt the user to relay over WS.
       relayQueue.push([memberId, raw])
-      onEvent({ event: 'relay_request' })
+      scheduleRelayPrompt()
       return true
     }
     return false
+  }
+
+  // When the center is *confirmed* gone, any message I sent after we last
+  // heard from it was never forwarded (relay to a dead center is impossible).
+  // Flag those as failed so the resend button appears. `seenAt` is the last
+  // proof-of-life timestamp for the old center; messages at or before it were
+  // already delivered. 0 = no proof on record → fail nothing (avoids a storm
+  // of false failures, e.g. on a link that never opened).
+  function failUndeliveredToCenter(seenAt: number) {
+    if (roomStore.isCenter || !seenAt) return
+    for (const m of msgStore.messages) {
+      if (m.fromId !== roomStore.clientId) continue
+      if (m.type !== 'chat' && m.type !== 'forward' && m.type !== 'file') continue
+      if (m.timestamp <= seenAt) continue
+      if (msgStore.failedIds.has(m.id)) continue
+      msgStore.markFailed(m.id)
+    }
   }
 
   // ──────────────────────────────────────────────
@@ -824,7 +932,10 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
 
   // ─── Public file API ─────────────────────────────────────
   function attachFile(file: File): { ok: true } | { ok: false; reason: 'too_large' } {
-    if (file.size > MAX_FILE_SIZE) return { ok: false, reason: 'too_large' }
+    // Pure P2P direct connections cost nothing, so any size is allowed.
+    // TURN and WS relay both consume server bandwidth → cap at MAX_FILE_SIZE.
+    const limit = connStore.state === 'p2p' ? Infinity : MAX_FILE_SIZE
+    if (file.size > limit) return { ok: false, reason: 'too_large' }
     const fileId = nanoid()
     filesStore.setOutgoing(fileId, file)
     const meta: FileMeta = {
@@ -1141,6 +1252,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   // Public: leave room
   // ──────────────────────────────────────────────
   function leave() {
+    clearRelayPrompt()
     clearMeteredRotation()
     voice.dispose()
     rtc.closeAll()

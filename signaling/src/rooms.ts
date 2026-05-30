@@ -92,9 +92,48 @@ export function dissolveIfBotsOnly(room: Room): boolean {
   for (const m of room.members.values()) {
     if (!m.isBot) return false
   }
+  if (room.dissolveTimer) {
+    clearTimeout(room.dissolveTimer)
+    room.dissolveTimer = undefined
+  }
   broadcast(room, { type: 'room_ended' })
   rooms.delete(room.key)
   return true
+}
+
+// Grace window before a bots-only room is torn down after the last human
+// drops *unexpectedly*. Gives the human's client time to auto-reconnect (via
+// lastClientId) and reclaim its slot — including the centerId, which still
+// points at the reused clientId — so the mesh rebuilds with no human-visible
+// interruption. Explicit leaves (a deliberate "leave"/"end room") skip this
+// and dissolve immediately.
+const DISSOLVE_GRACE_MS = 30_000
+
+/**
+ * Like {@link dissolveIfBotsOnly}, but deferred. If the room is now bots-only,
+ * arm a one-shot grace timer; when it fires we re-check and dissolve only if
+ * still bots-only (a human may have reconnected meanwhile). No-op if a human
+ * is present or a timer is already armed.
+ */
+export function scheduleDissolveIfBotsOnly(room: Room): void {
+  if (!rooms.has(room.key)) return
+  if (room.members.size === 0) return
+  for (const m of room.members.values()) {
+    if (!m.isBot) return // a human is still here — nothing to schedule
+  }
+  if (room.dissolveTimer) return // already counting down
+  room.dissolveTimer = setTimeout(() => {
+    room.dissolveTimer = undefined
+    dissolveIfBotsOnly(room)
+  }, DISSOLVE_GRACE_MS)
+}
+
+/** Cancel a pending grace dissolve (a human (re)joined within the window). */
+export function cancelDissolve(room: Room): void {
+  if (room.dissolveTimer) {
+    clearTimeout(room.dissolveTimer)
+    room.dissolveTimer = undefined
+  }
 }
 
 /**
