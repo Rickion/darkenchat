@@ -19,6 +19,9 @@ const { t } = useI18n()
 
 const emit = defineEmits<{
   send: [html: string]
+  // Files dropped onto / pasted into the composer are sent immediately rather
+  // than embedded in the editor (rich content is currently disabled).
+  sendFiles: [files: File[]]
 }>()
 
 const props = defineProps<{
@@ -226,25 +229,42 @@ const editor = useEditor({
       }
       return false
     },
+    // Rich content is disabled: paste is always coerced to plain text. Newlines
+    // are preserved as hard breaks (never as new rich blocks). If the clipboard
+    // carries a file instead of text (e.g. a pasted image), it is sent directly
+    // through the file flow, same as a drag-drop.
     handlePaste(_view, event) {
-      const items = Array.from(event.clipboardData?.items ?? [])
-      const imgItem = items.find(i => i.type.startsWith('image/'))
-      if (imgItem) {
-        const file = imgItem.getAsFile()
-        if (file && file.size <= 2 * 1024 * 1024) {
-          const reader = new FileReader()
-          reader.onload = e => {
-            editor.value
-              ?.chain()
-              .focus()
-              .setImage({ src: e.target?.result as string })
-              .run()
-          }
-          reader.readAsDataURL(file)
-          return true
-        }
+      if (props.disabled) return false
+      const dt = event.clipboardData
+      const text = dt?.getData('text/plain') ?? ''
+      if (text) {
+        const parts: Array<Record<string, unknown>> = []
+        text.split('\n').forEach((line, i) => {
+          if (i > 0) parts.push({ type: 'hardBreak' })
+          if (line) parts.push({ type: 'text', text: line })
+        })
+        editor.value?.chain().focus().insertContent(parts).run()
+        return true
+      }
+      const files = Array.from(dt?.items ?? [])
+        .filter(i => i.kind === 'file')
+        .map(i => i.getAsFile())
+        .filter((f): f is File => !!f)
+      if (files.length > 0) {
+        emit('sendFiles', files)
+        return true
       }
       return false
+    },
+    // File drops are owned by the wrapper-level drag overlay (see onDropFiles),
+    // which is the single place that emits `sendFiles`. Here we only block
+    // ProseMirror's default file handling so a stray drop that reaches the
+    // editor directly can't get inserted as content; the DOM `drop` still
+    // bubbles to the wrapper, which does the actual send.
+    handleDrop(_view, event) {
+      if (props.disabled) return false
+      const files = Array.from((event as DragEvent).dataTransfer?.files ?? [])
+      return files.length > 0
     },
   },
   onUpdate() {
@@ -264,40 +284,49 @@ function submit() {
   closeMention()
 }
 
-function toggleBold() {
-  editor.value?.chain().focus().toggleBold().run()
-}
-function toggleItalic() {
-  editor.value?.chain().focus().toggleItalic().run()
-}
-function toggleUnderline() {
-  editor.value?.chain().focus().toggleUnderline().run()
-}
-function toggleStrike() {
-  editor.value?.chain().focus().toggleStrike().run()
-}
-function toggleCode() {
-  editor.value?.chain().focus().toggleCode().run()
-}
-function toggleCodeBlock() {
-  editor.value?.chain().focus().toggleCodeBlock().run()
-}
-function toggleBulletList() {
-  editor.value?.chain().focus().toggleBulletList().run()
-}
-function toggleOrderedList() {
-  editor.value?.chain().focus().toggleOrderedList().run()
-}
-function toggleBlockquote() {
-  editor.value?.chain().focus().toggleBlockquote().run()
-}
-function setLink() {
-  const url = window.prompt(t('room.input_url_prompt'))
-  if (url) editor.value?.chain().focus().setLink({ href: url }).run()
+// ─── File drag-and-drop overlay ──────────────────────────
+// While a file is dragged over the composer we show a full-cover overlay
+// ("release to send"). `dragDepth` counts enter/leave across nested children
+// so the overlay doesn't flicker when the cursor crosses inner elements; the
+// overlay is only hidden once the count returns to zero (or on drop/leave).
+const dragDepth = ref(0)
+const isDraggingFile = ref(false)
+
+// True only for drags that actually carry files (not selected text / images
+// being dragged within the page).
+function dragHasFiles(e: DragEvent): boolean {
+  return Array.from(e.dataTransfer?.types ?? []).includes('Files')
 }
 
-function isActive(name: string, opts?: Record<string, unknown>) {
-  return editor.value?.isActive(name, opts) ?? false
+function onDragEnter(e: DragEvent) {
+  if (props.disabled || !dragHasFiles(e)) return
+  e.preventDefault()
+  dragDepth.value++
+  isDraggingFile.value = true
+}
+
+function onDragOver(e: DragEvent) {
+  if (!isDraggingFile.value) return
+  e.preventDefault() // required so the subsequent `drop` event fires
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+
+function onDragLeave() {
+  if (!isDraggingFile.value) return
+  dragDepth.value--
+  if (dragDepth.value <= 0) {
+    dragDepth.value = 0
+    isDraggingFile.value = false
+  }
+}
+
+function onDropFiles(e: DragEvent) {
+  dragDepth.value = 0
+  isDraggingFile.value = false
+  if (props.disabled) return
+  e.preventDefault()
+  const files = Array.from(e.dataTransfer?.files ?? [])
+  if (files.length > 0) emit('sendFiles', files)
 }
 
 // ─── Responsive toolbar collapse ─────────────────────────
@@ -345,134 +374,55 @@ onUnmounted(() => {
         <slot name="action-bar" />
       </div>
 
-      <!-- Expanded toolbar -->
-      <div v-if="!toolbarCollapsed" class="toolbar">
-        <v-btn icon size="x-small" variant="text" :color="isActive('bold') ? 'primary' : ''" @click="toggleBold">
-          <b>B</b>
-        </v-btn>
-        <v-btn icon size="x-small" variant="text" :color="isActive('italic') ? 'primary' : ''" @click="toggleItalic">
-          <i>I</i>
-        </v-btn>
-        <v-btn
-          icon
-          size="x-small"
-          variant="text"
-          :color="isActive('underline') ? 'primary' : ''"
-          @click="toggleUnderline">
-          <u>U</u>
-        </v-btn>
-        <v-btn icon size="x-small" variant="text" :color="isActive('strike') ? 'primary' : ''" @click="toggleStrike">
-          <s>S</s>
-        </v-btn>
-        <div class="sep" />
-        <v-btn
-          icon="mdi-code-tags"
-          size="x-small"
-          variant="text"
-          :color="isActive('code') ? 'primary' : ''"
-          @click="toggleCode" />
-        <v-btn
-          icon="mdi-code-braces"
-          size="x-small"
-          variant="text"
-          :color="isActive('codeBlock') ? 'primary' : ''"
-          @click="toggleCodeBlock" />
-        <div class="sep" />
-        <v-btn
-          icon="mdi-link"
-          size="x-small"
-          variant="text"
-          :color="isActive('link') ? 'primary' : ''"
-          @click="setLink" />
-        <v-btn
-          icon="mdi-format-list-bulleted"
-          size="x-small"
-          variant="text"
-          :color="isActive('bulletList') ? 'primary' : ''"
-          @click="toggleBulletList" />
-        <v-btn
-          icon="mdi-format-list-numbered"
-          size="x-small"
-          variant="text"
-          :color="isActive('orderedList') ? 'primary' : ''"
-          @click="toggleOrderedList" />
-        <v-btn
-          icon="mdi-format-quote-close"
-          size="x-small"
-          variant="text"
-          :color="isActive('blockquote') ? 'primary' : ''"
-          @click="toggleBlockquote" />
-      </div>
-
-      <!-- Collapsed: overflow "…" menu -->
-      <v-menu v-else location="top end" :close-on-content-click="false">
-        <template #activator="{ props: ap }">
-          <v-btn icon="mdi-dots-horizontal" size="x-small" variant="text" class="overflow-btn" v-bind="ap" />
+      <!-- Rich-text formatting — temporarily disabled ("coming soon"). The
+           buttons stay visible but greyed out and inert (pointer-events removed
+           on the children); the wrapper still receives hover so the tooltip
+           fires. Re-enable by dropping the `rich-disabled` class + tooltip. -->
+      <v-tooltip v-if="!toolbarCollapsed" :text="t('common.coming_soon')" location="top">
+        <template #activator="{ props: tp }">
+          <div class="toolbar rich-disabled" v-bind="tp">
+            <v-btn icon size="x-small" variant="text"><b>B</b></v-btn>
+            <v-btn icon size="x-small" variant="text"><i>I</i></v-btn>
+            <v-btn icon size="x-small" variant="text"><u>U</u></v-btn>
+            <v-btn icon size="x-small" variant="text"><s>S</s></v-btn>
+            <div class="sep" />
+            <v-btn icon="mdi-code-tags" size="x-small" variant="text" />
+            <v-btn icon="mdi-code-braces" size="x-small" variant="text" />
+            <div class="sep" />
+            <v-btn icon="mdi-link" size="x-small" variant="text" />
+            <v-btn icon="mdi-format-list-bulleted" size="x-small" variant="text" />
+            <v-btn icon="mdi-format-list-numbered" size="x-small" variant="text" />
+            <v-btn icon="mdi-format-quote-close" size="x-small" variant="text" />
+          </div>
         </template>
-        <div class="toolbar overflow-menu">
-          <v-btn icon size="x-small" variant="text" :color="isActive('bold') ? 'primary' : ''" @click="toggleBold">
-            <b>B</b>
-          </v-btn>
-          <v-btn icon size="x-small" variant="text" :color="isActive('italic') ? 'primary' : ''" @click="toggleItalic">
-            <i>I</i>
-          </v-btn>
-          <v-btn
-            icon
-            size="x-small"
-            variant="text"
-            :color="isActive('underline') ? 'primary' : ''"
-            @click="toggleUnderline">
-            <u>U</u>
-          </v-btn>
-          <v-btn icon size="x-small" variant="text" :color="isActive('strike') ? 'primary' : ''" @click="toggleStrike">
-            <s>S</s>
-          </v-btn>
-          <div class="sep" />
-          <v-btn
-            icon="mdi-code-tags"
-            size="x-small"
-            variant="text"
-            :color="isActive('code') ? 'primary' : ''"
-            @click="toggleCode" />
-          <v-btn
-            icon="mdi-code-braces"
-            size="x-small"
-            variant="text"
-            :color="isActive('codeBlock') ? 'primary' : ''"
-            @click="toggleCodeBlock" />
-          <div class="sep" />
-          <v-btn
-            icon="mdi-link"
-            size="x-small"
-            variant="text"
-            :color="isActive('link') ? 'primary' : ''"
-            @click="setLink" />
-          <v-btn
-            icon="mdi-format-list-bulleted"
-            size="x-small"
-            variant="text"
-            :color="isActive('bulletList') ? 'primary' : ''"
-            @click="toggleBulletList" />
-          <v-btn
-            icon="mdi-format-list-numbered"
-            size="x-small"
-            variant="text"
-            :color="isActive('orderedList') ? 'primary' : ''"
-            @click="toggleOrderedList" />
-          <v-btn
-            icon="mdi-format-quote-close"
-            size="x-small"
-            variant="text"
-            :color="isActive('blockquote') ? 'primary' : ''"
-            @click="toggleBlockquote" />
-        </div>
-      </v-menu>
+      </v-tooltip>
+
+      <!-- Collapsed: a single disabled "…" affordance with the same hint. -->
+      <v-tooltip v-else :text="t('common.coming_soon')" location="top">
+        <template #activator="{ props: tp }">
+          <v-btn icon="mdi-dots-horizontal" size="x-small" variant="text" class="overflow-btn" disabled v-bind="tp" />
+        </template>
+      </v-tooltip>
     </div>
 
     <!-- Editor area -->
     <div class="editor-row">
-      <div ref="editorWrap" class="editor-wrap">
+      <div
+        ref="editorWrap"
+        class="editor-wrap"
+        @dragenter="onDragEnter"
+        @dragover="onDragOver"
+        @dragleave="onDragLeave"
+        @drop="onDropFiles">
         <editor-content :editor="editor" />
+
+        <!-- Drag-to-send overlay: covers the input while a file is dragged over
+             it. Drops land here (top z-index), so the file is sent immediately
+             rather than being inserted into the editor. -->
+        <div v-if="isDraggingFile && !disabled" class="drop-overlay">
+          <v-icon size="22" color="primary">mdi-tray-arrow-up</v-icon>
+          <span>{{ t('room.drop_to_send') }}</span>
+        </div>
 
         <!-- Mention picker -->
         <div
@@ -547,6 +497,14 @@ onUnmounted(() => {
 .overflow-btn {
   margin-left: auto;
 }
+/* Rich-text buttons are temporarily disabled: greyed out, and inert children
+   so the wrapper keeps hover (and the "coming soon" tooltip) alive. */
+.rich-disabled {
+  opacity: 0.45;
+}
+.rich-disabled > * {
+  pointer-events: none;
+}
 .overflow-menu {
   display: flex;
   align-items: center;
@@ -581,6 +539,22 @@ onUnmounted(() => {
 }
 .editor-wrap :deep(.tiptap) {
   border-radius: 10px;
+}
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 10px;
+  border: 1.5px dashed var(--dc-gold, #c9a84c);
+  background: rgba(201, 168, 76, 0.12);
+  backdrop-filter: blur(1px);
+  font-size: 0.85rem;
+  color: var(--dc-text);
+  user-select: none;
 }
 
 /* Mention picker popup */

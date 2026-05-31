@@ -10,7 +10,7 @@ import { MAX_VOICE_PARTICIPANTS } from '@/composables/useVoice'
 import { useNotification } from '@/composables/useNotification'
 import { useRoomStore } from '@/stores/room'
 import { useMessagesStore } from '@/stores/messages'
-import { useConnectionStore } from '@/stores/connection'
+import { useConnectionStore, type ConnState } from '@/stores/connection'
 import { useTurnStore } from '@/stores/turn'
 import { useVoiceStore } from '@/stores/voice'
 import type { Message, MemberInfo, FileMeta } from '@/types'
@@ -177,12 +177,38 @@ function shouldShowHeader(messages: Message[], index: number): boolean {
   return currMinute !== prevMinute
 }
 
-// Watch for WebSocket disconnection
+// Collapses the signaling control-channel + center-reconnect situation into a
+// single tri-state the UI keys off. 'disconnected' (control channel down long
+// enough) hides the member list; 'reconnecting' shows the spinner badge. We
+// deliberately never surface "re-electing a center" to the user — from their
+// side it's all just "reconnecting".
+const linkState = computed<'ok' | 'reconnecting' | 'disconnected'>(() => {
+  if (signaling.disconnected.value) return 'disconnected'
+  if (signaling.reconnecting.value || roomStore.reconnecting) return 'reconnecting'
+  return 'ok'
+})
+
+// The connection status shown in the header icon: a control-channel issue
+// overrides the data-plane transport tier (p2p/turn/relay).
+const displayState = computed<ConnState>(() => {
+  if (linkState.value === 'disconnected') return 'disconnected'
+  if (linkState.value === 'reconnecting') return 'reconnecting'
+  return connStore.state
+})
+
+// Unified link-state snackbar. Replaces the old "Connection lost. Please
+// refresh." dead-end — we now auto-reconnect, so the messaging is "reconnecting
+// / disconnected (still retrying) / reconnected". Center re-election folds into
+// the same states (we never say "electing a center").
 watch(
-  () => signaling.disconnected.value,
-  disconnected => {
-    if (disconnected) {
-      showSnackbar(t('error.connection_lost'), 'error', 0)
+  () => linkState.value,
+  (state, prev) => {
+    if (state === 'reconnecting') {
+      showSnackbar(t('conn.reconnecting'), 'warning', 0)
+    } else if (state === 'disconnected') {
+      showSnackbar(t('conn.disconnected'), 'error', 0)
+    } else if (prev && prev !== 'ok') {
+      showSnackbar(t('system.reconnected'), 'success', 3000)
     }
   },
 )
@@ -257,15 +283,6 @@ watch(
   },
 )
 
-// ─── Reconnecting snackbar ────────────────────────────────
-watch(
-  () => roomStore.reconnecting,
-  v => {
-    if (v) showSnackbar(t('system.reconnecting'), 'warning')
-    else showSnackbar(t('system.reconnected'), 'success', 3000)
-  },
-)
-
 // ─── TURN toast: show once when state changes to 'turn' ──
 watch(
   () => connStore.state,
@@ -310,13 +327,31 @@ const privacyIcon = computed(() => {
 const privacyColor = computed(() => connStore.color)
 
 // ─── Connection-establishing gate ─────────────────────────
-// True while this client is still wiring up its transport — either the
-// initial join (a non-center peer hasn't opened its DataChannel to the
-// center yet) or a mid-session reconnect / center rotation. While true the
-// composer is disabled and shows an overlay, so the user can't fire a
-// message into a half-built pipe. The lone center is never "connecting" in
-// this sense — it has nothing to connect to and can type immediately.
-const connecting = computed(() => roomStore.reconnecting || (connStore.state === 'connecting' && !roomStore.isCenter))
+// True while this client is still wiring up its transport. Disabling the
+// composer prevents firing a message into a half-built pipe.
+//   • Reconnecting (WS drop, center rotation) → always blocked.
+//   • Non-center: the global connStore.state === 'connecting' tracks the
+//     single link to the center.
+//   • Center: connStore.state is always 'connecting' while alone (there's
+//     nothing to connect to), so we can't use that. Instead, block only
+//     while NO peer has a confirmed connType yet — i.e. the brief window
+//     between the first peer joining and its DataChannel opening. Once at
+//     least one peer is connected, the center can chat freely even if
+//     other peers are reconnecting (we don't want one flaky peer to silence
+//     the whole room).
+const connecting = computed(() => {
+  // Signaling control channel re-establishing or down → block the composer
+  // until we're re-attached to the room.
+  if (signaling.reconnecting.value || signaling.disconnected.value) return true
+  if (roomStore.reconnecting) return true
+  if (connStore.state === 'connecting' && !roomStore.isCenter) return true
+  if (roomStore.isCenter) {
+    const others = roomStore.members.filter(m => m.clientId !== roomStore.clientId)
+    if (others.length === 0) return false
+    return !others.some(m => !!m.connType)
+  }
+  return false
+})
 
 // ─── Actions ──────────────────────────────────────────────
 function onSend(html: string) {
@@ -339,6 +374,17 @@ function onFilePicked(e: Event) {
   const result = attachFile(file)
   if (!result.ok && result.reason === 'too_large') {
     showSnackbar(t('file.too_large', { mb: Math.floor(MAX_FILE_SIZE / 1024 / 1024) }), 'warning', 4000)
+  }
+}
+
+// Files dropped onto / pasted into the composer are sent immediately.
+function onSendFiles(files: File[]) {
+  if (connecting.value) return
+  for (const file of files) {
+    const result = attachFile(file)
+    if (!result.ok && result.reason === 'too_large') {
+      showSnackbar(t('file.too_large', { mb: Math.floor(MAX_FILE_SIZE / 1024 / 1024) }), 'warning', 4000)
+    }
   }
 }
 
@@ -398,6 +444,21 @@ function onKickRequest(member: MemberInfo) {
 function onForwardSend(msgs: Message[], note: string) {
   sendForward(msgs, note)
   showForward.value = false
+}
+
+// True when at least one chat bubble is currently folded shut. Drives the
+// action-bar toggle's icon and tooltip — and the click handler's decision
+// to fold or unfold based on current state.
+const anyCollapsed = computed(() => msgStore.collapsedIds.size > 0)
+function onToggleCollapseAll() {
+  if (anyCollapsed.value) {
+    msgStore.expandAll()
+    return
+  }
+  // Fold only plain chat bubbles — files/voice/forwards have their own UI and
+  // there's no fold state defined for them.
+  const ids = msgStore.messages.filter(m => m.type === 'chat' && !m.isSystem).map(m => m.id)
+  msgStore.collapseAll(ids)
 }
 
 function dismissKicked() {
@@ -488,14 +549,14 @@ function onComingSoon(label: string) {
 
         <!-- Connection status icon -->
         <v-tooltip
-          :text="connStore.techMode ? t('conn.' + connStore.state + '_tech') : t('conn.' + connStore.state)"
+          :text="connStore.techMode ? t('conn.' + displayState + '_tech') : t('conn.' + displayState)"
           location="bottom">
           <template #activator="{ props: tp }">
             <v-btn
-              :icon="connStore.icon"
+              :icon="connStore.iconFor(displayState)"
               size="x-small"
               variant="text"
-              :style="{ color: connStore.color }"
+              :style="{ color: connStore.colorFor(displayState) }"
               v-bind="tp"
               @click="showConnDetail = !showConnDetail" />
           </template>
@@ -565,9 +626,23 @@ function onComingSoon(label: string) {
             class="sidebar-close-btn"
             @click="sidebarOpen = false" />
           <div class="sidebar-header">
-            <span class="sidebar-title">{{ t('room.members_count', { count: roomStore.members.length }) }}</span>
+            <span class="sidebar-title">
+              {{
+                linkState === 'disconnected'
+                  ? t('room.members')
+                  : t('room.members_count', { count: roomStore.members.length })
+              }}
+            </span>
+          </div>
+          <!-- Control channel down long enough that the roster is no longer
+               trustworthy — hide it and show a reconnecting placeholder
+               instead of stale members. -->
+          <div v-if="linkState === 'disconnected'" class="member-list-offline">
+            <v-icon size="20" color="#F44336">mdi-lan-disconnect</v-icon>
+            <span>{{ t('conn.disconnected') }}</span>
           </div>
           <MemberList
+            v-else
             :members="roomStore.members"
             :chair-id="roomStore.chairId"
             :client-id="roomStore.clientId"
@@ -624,7 +699,8 @@ function onComingSoon(label: string) {
             :overlay-text="connecting ? t('room.establishing_connection') : ''"
             :members="roomStore.members"
             :client-id="roomStore.clientId"
-            @send="onSend">
+            @send="onSend"
+            @send-files="onSendFiles">
             <template #action-bar>
               <v-tooltip :text="t('forward.tooltip')" location="top">
                 <template #activator="{ props: tp }">
@@ -634,6 +710,16 @@ function onComingSoon(label: string) {
                     variant="text"
                     v-bind="tp"
                     @click="showForward = !showForward" />
+                </template>
+              </v-tooltip>
+              <v-tooltip :text="anyCollapsed ? t('room.expand_all') : t('room.collapse_all')" location="top">
+                <template #activator="{ props: tp }">
+                  <v-btn
+                    :icon="anyCollapsed ? 'mdi-unfold-more-horizontal' : 'mdi-unfold-less-horizontal'"
+                    size="x-small"
+                    variant="text"
+                    v-bind="tp"
+                    @click="onToggleCollapseAll" />
                 </template>
               </v-tooltip>
               <v-tooltip :text="t('file.attach_tooltip')" location="top">
@@ -745,11 +831,11 @@ function onComingSoon(label: string) {
       <v-dialog v-model="showConnDetail" max-width="460">
         <v-card id="conn-detail-panel" color="surface">
           <v-card-title class="d-flex align-center gap-2">
-            <v-icon :style="{ color: connStore.color }">{{ connStore.icon }}</v-icon>
-            {{ t('conn.' + connStore.state) }}
+            <v-icon :style="{ color: connStore.colorFor(displayState) }">{{ connStore.iconFor(displayState) }}</v-icon>
+            {{ t('conn.' + displayState) }}
           </v-card-title>
           <v-card-text>
-            {{ connStore.techMode ? t('conn.' + connStore.state + '_tech') : t('conn.' + connStore.state) }}
+            {{ connStore.techMode ? t('conn.' + displayState + '_tech') : t('conn.' + displayState) }}
           </v-card-text>
 
           <!-- TURN server settings -->
@@ -1106,6 +1192,17 @@ function onComingSoon(label: string) {
   color: var(--dc-gray);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+.member-list-offline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 16px;
+  color: var(--dc-gray);
+  font-size: 0.82rem;
+  text-align: center;
 }
 .room-main {
   flex: 1;

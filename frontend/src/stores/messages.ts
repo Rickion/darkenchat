@@ -28,8 +28,10 @@ export const useMessagesStore = defineStore('messages', () => {
   // Local-only delivery metadata — NOT serialised/transmitted.
   // failedIds: own messages that couldn't be delivered (show resend button).
   // catchupIds: messages received as catch-up history (blink animation on arrival).
+  // collapsedIds: chat bubbles the user has folded shut (per-message toggle).
   const failedIds = reactive(new Set<string>())
   const catchupIds = reactive(new Set<string>())
+  const collapsedIds = reactive(new Set<string>())
 
   function load(roomKey: string) {
     currentRoomKey.value = roomKey
@@ -71,10 +73,22 @@ export const useMessagesStore = defineStore('messages', () => {
     catchupIds.add(id)
   }
 
+  function toggleCollapsed(id: string) {
+    if (collapsedIds.has(id)) collapsedIds.delete(id)
+    else collapsedIds.add(id)
+  }
+  function collapseAll(ids: string[]) {
+    for (const id of ids) collapsedIds.add(id)
+  }
+  function expandAll() {
+    collapsedIds.clear()
+  }
+
   function clear(roomKey?: string) {
     messages.value = []
     failedIds.clear()
     catchupIds.clear()
+    collapsedIds.clear()
     const k = roomKey ?? currentRoomKey.value
     if (k) sessionStorage.removeItem(SESSION_KEY_PREFIX + k)
     currentRoomKey.value = ''
@@ -85,12 +99,16 @@ export const useMessagesStore = defineStore('messages', () => {
     currentRoomKey,
     failedIds,
     catchupIds,
+    collapsedIds,
     load,
     add,
     update,
     markFailed,
     clearFailed,
     markCatchup,
+    toggleCollapsed,
+    collapseAll,
+    expandAll,
     clear,
   }
 })

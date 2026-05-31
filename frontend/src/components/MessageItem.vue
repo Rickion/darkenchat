@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 import type { Message, FileMeta, VoiceSessionMeta } from '@/types'
 import { useFilesStore } from '@/stores/files'
 import { useVoiceStore } from '@/stores/voice'
 import { useRoomStore } from '@/stores/room'
+import { useMessagesStore } from '@/stores/messages'
 import { AUTO_FETCH_SIZE } from '@/composables/useRoom'
 import { MENTION_ALL_ID, MENTION_ALL_AI_ID } from '@/_shared/mentions'
 
@@ -35,6 +36,7 @@ const expanded = ref(false)
 const filesStore = useFilesStore()
 const voiceStore = useVoiceStore()
 const roomStore = useRoomStore()
+const msgStore = useMessagesStore()
 
 const time = computed(() => dayjs(props.message.timestamp).format('HH:mm'))
 
@@ -69,6 +71,9 @@ function highlightMentions(html: string): string {
     const isAll = targetId === MENTION_ALL_ID
     const isAllAi = targetId === MENTION_ALL_AI_ID
     const isSelf = !!props.clientId && targetId === props.clientId
+    // "Mention of someone else" — visible to third-party viewers as a yellow
+    // border (same shape as @self, only background differs).
+    const isOther = !isAll && !isAllAi && !isSelf && !!targetId
     let newAttrs = attrs
     const addClass = (cls: string) => {
       newAttrs = newAttrs.replace(
@@ -78,6 +83,7 @@ function highlightMentions(html: string): string {
     }
     if (isAll || isAllAi) addClass('mention-all')
     if (isSelf) addClass('mention-self')
+    else if (isOther) addClass('mention-other')
     let newInner = inner
     // Re-localise the @everyone / @all-AI labels to the viewer's locale.
     if (isAll) newInner = '@' + t('room.mention_all')
@@ -248,6 +254,170 @@ function onFileCardClick() {
   if (isMedia.value && !objectUrl.value) emit('view-file', fileMeta.value)
   else emit('download-file', fileMeta.value)
 }
+
+// ─── Chat-bubble collapse + copy ──────────────────────────
+// Applies only to plain chat bubbles (the `<div v-else …>` branch at the
+// bottom of the template). The side-gutter icon group adapts to:
+//   • PC  → hover-only, follows the mouse Y on the bubble's side
+//   • mobile + bubble > 1 viewport → two groups (top & bottom of the side)
+//   • mobile + short bubble        → single group below the bubble outside
+// Single-line bubbles get no icons (collapse is meaningless and copy is rarely
+// needed — keeps short messages visually clean).
+
+const bubbleEl = ref<HTMLDivElement | null>(null)
+const naturalH = ref(0) // height of fully-expanded bubble content
+const viewportH = ref(typeof window !== 'undefined' ? window.innerHeight : 800)
+const hovering = ref(false)
+const mouseY = ref(0) // relative to bubble top
+// When the cursor is over the icon group itself, freeze the follow-mouse Y so
+// the icons don't shift out from under the click target.
+const iconHovered = ref(false)
+
+const isCollapsed = computed(() => msgStore.collapsedIds.has(props.message.id))
+
+// "Single line": the un-collapsed content height is at most ~1.6 line-heights
+// of the bubble's font-size (msg-content uses 0.92rem * 1.5 ≈ 22px). The
+// 1.6 multiplier gives a forgiving threshold so a chip-only message ("@Bob")
+// still counts as one line even with chip padding.
+const isSingleLine = computed(() => {
+  if (naturalH.value === 0) return true // before measurement; safe default = hide icons
+  return naturalH.value <= 32
+})
+
+const isMobile = computed(() => viewportH.value > 0 && window.innerWidth < 768)
+const bubbleOverflowsScreen = computed(() => naturalH.value > viewportH.value * 0.9)
+
+// Where to render the icon group(s). 'none' = no icons (non-chat / select).
+// The group itself stays visible for single-line bubbles so the copy icon can
+// still appear on hover; the collapse icon inside is gated separately by
+// `!isSingleLine` (collapsing a one-line message is meaningless).
+type IconMode = 'none' | 'pc-follow' | 'mobile-side-both' | 'mobile-side'
+const iconMode = computed<IconMode>(() => {
+  if (props.selectMode) return 'none' // selection mode owns the bubble UI
+  if (props.message.type !== 'chat') return 'none'
+  if (props.message.isSystem) return 'none'
+  if (isMobile.value) {
+    // Mobile has no hover, so the side group is always shown. A collapsed
+    // bubble is visually short regardless of its (unchanged) natural height,
+    // so the dual top/bottom anchors would overlap — use a single centred
+    // group instead. A tall expanded bubble gets two anchors (top + bottom)
+    // so an icon is always reachable; everything else gets one centred group.
+    if (isCollapsed.value) return 'mobile-side'
+    return bubbleOverflowsScreen.value ? 'mobile-side-both' : 'mobile-side'
+  }
+  return hovering.value ? 'pc-follow' : 'none'
+})
+
+// Lays out the PC follow-mouse icon group. Clamp the Y so the icon group
+// stays fully inside the bubble height even near the edges.
+const ICON_HALF = 30 // approx half-height of stacked icon group
+const iconY = computed(() => {
+  const h = bubbleEl.value?.offsetHeight ?? 0
+  if (h === 0) return 0
+  return Math.max(ICON_HALF, Math.min(h - ICON_HALF, mouseY.value))
+})
+
+function onBubbleEnter() {
+  hovering.value = true
+}
+function onBubbleLeave() {
+  hovering.value = false
+  iconHovered.value = false
+}
+function onBubbleMouseMove(e: MouseEvent) {
+  if (!bubbleEl.value) return
+  // Freeze Y once the cursor is on the icon group — otherwise the icons
+  // drift mid-click and the user keeps chasing them.
+  if (iconHovered.value) return
+  const rect = bubbleEl.value.getBoundingClientRect()
+  mouseY.value = e.clientY - rect.top
+}
+function onIconGroupEnter() {
+  iconHovered.value = true
+}
+function onIconGroupLeave() {
+  iconHovered.value = false
+}
+
+function onToggleCollapsed() {
+  msgStore.toggleCollapsed(props.message.id)
+  // Collapsing/expanding shrinks or grows the bubble under a stationary
+  // cursor, leaving the PC follow-mouse icons floating at a now-meaningless
+  // Y. Drop the hover state so the icons dismiss with the click; they
+  // reappear on the next genuine mouse-enter.
+  hovering.value = false
+  iconHovered.value = false
+}
+
+// Build the plain-text representation for clipboard.
+// • Strips mention chips to their visible "@Nick" label
+// • Drops all other HTML tags but keeps paragraph breaks as newlines
+// • Prepends "[Position: …] " when this is a stance-bearing message, so the
+//   copied context isn't lost.
+function plainTextForCopy(): string {
+  const html = props.message.content
+  const withBreaks = html.replace(/<\/p>\s*<p[^>]*>/gi, '\n').replace(/<\/?p[^>]*>/gi, '')
+  const text = withBreaks.replace(/<[^>]+>/g, '').trim()
+  const stance = props.message.stance?.position
+  return stance ? `[${stance}] ${text}` : text
+}
+async function onCopyMessage() {
+  const text = plainTextForCopy()
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // Fallback for non-secure contexts: use an off-screen textarea.
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.select()
+    try {
+      document.execCommand('copy')
+    } catch {
+      /* ignore */
+    }
+    document.body.removeChild(ta)
+  }
+}
+
+// Track natural bubble content height. We measure msg-content directly so
+// chat-msg padding + the (sometimes present) stance-box don't inflate the
+// "is the content single-line?" check. scrollHeight stays correct even when
+// the bubble is collapsed (the mask-image clamp doesn't change layout height
+// of the inner element — only the visual overflow).
+let resizeObs: ResizeObserver | null = null
+function measureBubble() {
+  const el = bubbleEl.value
+  if (!el) return
+  const inner = el.querySelector<HTMLElement>('.msg-content')
+  naturalH.value = inner ? inner.scrollHeight : el.scrollHeight
+}
+function onWindowResize() {
+  viewportH.value = window.innerHeight
+  measureBubble()
+}
+onMounted(() => {
+  nextTick(measureBubble)
+  if (bubbleEl.value) {
+    resizeObs = new ResizeObserver(measureBubble)
+    resizeObs.observe(bubbleEl.value)
+  }
+  window.addEventListener('resize', onWindowResize)
+})
+onBeforeUnmount(() => {
+  resizeObs?.disconnect()
+  resizeObs = null
+  window.removeEventListener('resize', onWindowResize)
+})
+// Re-measure when content changes (e.g. mention re-localisation after a
+// language switch could change wrapping).
+watch(
+  () => props.message.content,
+  () => nextTick(measureBubble),
+)
 </script>
 
 <template>
@@ -402,35 +572,185 @@ function onFileCardClick() {
       <v-icon v-if="message.isBot" size="13" color="secondary" class="bot-badge" :title="'AI'">mdi-robot</v-icon>
       <span class="msg-time">{{ time }}</span>
     </div>
-    <!-- Bubble with message content only -->
+    <!-- Bubble + side-gutter icon overlay (collapse / copy).
+         The wrapper is the hover surface so leaving the bubble onto the icon
+         group doesn't dismiss the icons mid-click. -->
     <div
-      class="chat-msg"
-      :class="{
-        mine: isMine,
-        'select-mode': selectMode,
-        'catchup-flash': catchup,
-        'no-header': showHeader === false,
-      }">
-      <v-checkbox
-        v-if="selectMode"
-        :model-value="selected"
-        hide-details
-        density="compact"
-        class="select-cb"
-        @click.stop
-        @update:model-value="emit('toggle', message.id)" />
-      <!-- Expert-panel stance (structured field from the MCP send_message tool) -->
-      <div v-if="message.stance" class="stance-box">
-        <div class="stance-position">
-          <v-icon size="11" class="stance-icon">mdi-flag-variant-outline</v-icon>
-          {{ message.stance.position }}
+      class="bubble-wrap"
+      :class="{ mine: isMine }"
+      @mouseenter="onBubbleEnter"
+      @mouseleave="onBubbleLeave"
+      @mousemove="onBubbleMouseMove">
+      <div
+        ref="bubbleEl"
+        class="chat-msg"
+        :class="{
+          mine: isMine,
+          'select-mode': selectMode,
+          'catchup-flash': catchup,
+          'no-header': showHeader === false,
+          collapsed: isCollapsed,
+          'has-stance': !!message.stance,
+        }">
+        <v-checkbox
+          v-if="selectMode"
+          :model-value="selected"
+          hide-details
+          density="compact"
+          class="select-cb"
+          @click.stop
+          @update:model-value="emit('toggle', message.id)" />
+        <!-- Expert-panel stance (structured field from the MCP send_message
+             tool). Rendered as a status-colour strip flush with the bubble's
+             top edge and STACKED ABOVE the content (column layout). When the
+             bubble is collapsed only the colour band remains — the position /
+             relation text hides, while the content below keeps its
+             half-line-2 + gradient collapse preview. -->
+        <div v-if="message.stance" class="stance-box" :class="{ collapsed: isCollapsed }">
+          <div v-if="!isCollapsed" class="stance-detail">
+            <div class="stance-position">
+              <v-icon size="11" class="stance-icon">mdi-flag-variant-outline</v-icon>
+              {{ message.stance.position }}
+            </div>
+            <div v-if="stanceAgree || stanceDisagree" class="stance-rel">
+              <span v-if="stanceAgree" class="stance-agree">▲ {{ stanceAgree }}</span>
+              <span v-if="stanceDisagree" class="stance-disagree">▼ {{ stanceDisagree }}</span>
+            </div>
+          </div>
         </div>
-        <div v-if="stanceAgree || stanceDisagree" class="stance-rel">
-          <span v-if="stanceAgree" class="stance-agree">▲ {{ stanceAgree }}</span>
-          <span v-if="stanceDisagree" class="stance-disagree">▼ {{ stanceDisagree }}</span>
-        </div>
+        <div class="msg-content" v-html="renderedContent" />
       </div>
-      <div class="msg-content" v-html="renderedContent" />
+      <!-- PC: follow-mouse icon group on the bubble's outside. The collapse
+           v-btn is gated by `!isSingleLine` — collapsing a one-line message
+           does nothing — but the copy v-btn ALWAYS shows on hover so even
+           short messages can be copied via the gutter. While the cursor is
+           on the icon group itself the follow-mouse Y freezes
+           (`@mouseenter` flips iconHovered → onBubbleMouseMove no-ops). -->
+      <div
+        v-if="iconMode === 'pc-follow'"
+        class="bubble-icons bubble-icons-side"
+        :class="{ 'side-left': isMine, 'side-right': !isMine }"
+        :style="{ top: iconY + 'px' }"
+        @mouseenter="onIconGroupEnter"
+        @mouseleave="onIconGroupLeave">
+        <v-tooltip
+          v-if="!isSingleLine"
+          :text="isCollapsed ? t('room.expand') : t('room.collapse')"
+          location="top"
+          open-delay="1000">
+          <template #activator="{ props: tp }">
+            <v-btn
+              :icon="isCollapsed ? 'mdi-unfold-more-horizontal' : 'mdi-unfold-less-horizontal'"
+              size="x-small"
+              variant="text"
+              density="comfortable"
+              v-bind="tp"
+              @click.stop="onToggleCollapsed" />
+          </template>
+        </v-tooltip>
+        <v-tooltip :text="t('room.copy')" location="top" open-delay="1000">
+          <template #activator="{ props: tp }">
+            <v-btn
+              icon="mdi-content-copy"
+              size="x-small"
+              variant="text"
+              density="comfortable"
+              v-bind="tp"
+              @click.stop="onCopyMessage" />
+          </template>
+        </v-tooltip>
+      </div>
+      <!-- Mobile + long bubble: two groups (top + bottom of the side). A long
+           bubble is by definition multi-line, so the collapse icon shows
+           unconditionally here. -->
+      <template v-else-if="iconMode === 'mobile-side-both'">
+        <div
+          class="bubble-icons bubble-icons-side bubble-icons-anchor-top"
+          :class="{ 'side-left': isMine, 'side-right': !isMine }">
+          <v-tooltip :text="isCollapsed ? t('room.expand') : t('room.collapse')" location="top" open-delay="1000">
+            <template #activator="{ props: tp }">
+              <v-btn
+                :icon="isCollapsed ? 'mdi-unfold-more-horizontal' : 'mdi-unfold-less-horizontal'"
+                size="x-small"
+                variant="text"
+                density="comfortable"
+                v-bind="tp"
+                @click.stop="onToggleCollapsed" />
+            </template>
+          </v-tooltip>
+          <v-tooltip :text="t('room.copy')" location="top" open-delay="1000">
+            <template #activator="{ props: tp }">
+              <v-btn
+                icon="mdi-content-copy"
+                size="x-small"
+                variant="text"
+                density="comfortable"
+                v-bind="tp"
+                @click.stop="onCopyMessage" />
+            </template>
+          </v-tooltip>
+        </div>
+        <div
+          class="bubble-icons bubble-icons-side bubble-icons-anchor-bottom"
+          :class="{ 'side-left': isMine, 'side-right': !isMine }">
+          <v-tooltip :text="isCollapsed ? t('room.expand') : t('room.collapse')" location="top" open-delay="1000">
+            <template #activator="{ props: tp }">
+              <v-btn
+                :icon="isCollapsed ? 'mdi-unfold-more-horizontal' : 'mdi-unfold-less-horizontal'"
+                size="x-small"
+                variant="text"
+                density="comfortable"
+                v-bind="tp"
+                @click.stop="onToggleCollapsed" />
+            </template>
+          </v-tooltip>
+          <v-tooltip :text="t('room.copy')" location="top" open-delay="1000">
+            <template #activator="{ props: tp }">
+              <v-btn
+                icon="mdi-content-copy"
+                size="x-small"
+                variant="text"
+                density="comfortable"
+                v-bind="tp"
+                @click.stop="onCopyMessage" />
+            </template>
+          </v-tooltip>
+        </div>
+      </template>
+      <!-- Mobile + short bubble: a single vertically-centred group in the side
+           gutter — beside the bubble, same placement as PC (always shown, no
+           hover on touch). Collapse icon hidden for single-line bubbles. -->
+      <div
+        v-else-if="iconMode === 'mobile-side'"
+        class="bubble-icons bubble-icons-side bubble-icons-anchor-center"
+        :class="{ 'side-left': isMine, 'side-right': !isMine }">
+        <v-tooltip
+          v-if="!isSingleLine"
+          :text="isCollapsed ? t('room.expand') : t('room.collapse')"
+          location="top"
+          open-delay="1000">
+          <template #activator="{ props: tp }">
+            <v-btn
+              :icon="isCollapsed ? 'mdi-unfold-more-horizontal' : 'mdi-unfold-less-horizontal'"
+              size="x-small"
+              variant="text"
+              density="comfortable"
+              v-bind="tp"
+              @click.stop="onToggleCollapsed" />
+          </template>
+        </v-tooltip>
+        <v-tooltip :text="t('room.copy')" location="top" open-delay="1000">
+          <template #activator="{ props: tp }">
+            <v-btn
+              icon="mdi-content-copy"
+              size="x-small"
+              variant="text"
+              density="comfortable"
+              v-bind="tp"
+              @click.stop="onCopyMessage" />
+          </template>
+        </v-tooltip>
+      </div>
     </div>
   </div>
 </template>
@@ -516,17 +836,42 @@ function onFileCardClick() {
   line-height: 1.5;
   word-break: break-word;
 }
-/* ── Expert-panel stance strip ── */
+/* ── Expert-panel stance strip ──
+   A stance turns the bubble into a column: a status-colour header strip flush
+   with the bubble's top edge, then the message content below. The strip bleeds
+   out over the bubble's 8px/14px padding to sit edge-to-edge; `overflow:hidden`
+   on the bubble clips the strip's square corners to the bubble's top radius so
+   the colour band "重合" with the bubble top. Only the top of the bubble
+   carries the stance colour — the content area keeps the plain bubble bg. */
+.chat-msg.has-stance {
+  flex-direction: column;
+  align-items: stretch;
+  padding-top: 0;
+  overflow: hidden;
+}
+/* In the forward-picker the checkbox shares the column — keep it from
+   stretching full width. */
+.chat-msg.has-stance .select-cb {
+  align-self: flex-start;
+}
 .stance-box {
-  margin-bottom: 5px;
-  padding: 4px 7px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  border-left: 2px solid var(--dc-teal);
+  margin: 0 -14px 7px;
+  padding: 5px 14px 6px;
+  background: rgba(74, 155, 142, 0.16);
+  border-top: 3px solid var(--dc-teal);
   font-size: 0.78rem;
 }
 .chat-msg.mine .stance-box {
-  background: rgba(0, 0, 0, 0.07);
+  background: rgba(74, 155, 142, 0.24);
+}
+/* Collapsed: keep ONLY the status-colour band; the position / relation text is
+   removed from the DOM (v-if), so the strip shrinks to a slim solid bar. */
+.stance-box.collapsed {
+  margin: 0 -14px 7px;
+  padding: 0;
+  height: 5px;
+  border-top: 0;
+  background: var(--dc-teal);
 }
 .stance-position {
   display: flex;
@@ -909,5 +1254,104 @@ function onFileCardClick() {
 }
 .voice-icon {
   flex-shrink: 0;
+}
+
+/* ── Bubble wrapper (chat bubble + side gutter icons) ──
+   inline-block so the wrap shrinks to its content; gutter padding on the
+   side away from the bubble's edge holds the absolute-positioned icon
+   group INSIDE the wrap's bounding box. This is load-bearing for hover:
+   if the icons sat outside the wrap (negative offset), moving the cursor
+   from the bubble onto the icons would trigger mouseleave and dismiss
+   them mid-click. Bubble alignment math:
+     • non-mine: wrap aligns flex-start, padding on the right; bubble
+                 sits left-flush, gutter is 38px to the right of bubble.
+     • mine:     wrap aligns flex-end, padding on the left; bubble sits
+                 right-flush, gutter is 38px to the left of bubble.
+*/
+.bubble-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  padding-right: 38px;
+}
+.bubble-wrap.mine {
+  padding-right: 0;
+  padding-left: 38px;
+}
+
+/* Collapsed bubble: clamp height so line 1 is fully visible AND line 2's top
+   half is shown. Line-height is 1.5em, so 2.25em = one full line + 0.75em ≈
+   half of line 2. A ::after pseudo-element paints a gradient overlay
+   (transparent → bubble-bg) on the bottom 1.1em so the cut is visually
+   absorbed into the bubble instead of being a hard slice — the eye reads it
+   as "the text is fading out, there's more below". We use an overlay rather
+   than mask-image because:
+     • mask-image fades text to transparent — fragile across browsers, and
+       only the very thin clipped region shows the effect.
+     • An overlay gradient using the bubble's own background colour produces
+       a stronger, controllable "fog" that's identical across engines.
+   stance-box is outside .msg-content and stays fully visible regardless. */
+.chat-msg.collapsed .msg-content {
+  max-height: 2.25em;
+  overflow: hidden;
+  position: relative;
+}
+.chat-msg.collapsed .msg-content::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.1em;
+  pointer-events: none;
+  /* Default = panel-coloured bubble (non-mine). The `.mine` override below
+     swaps to gold. The 0%-alpha stop uses the same RGB as the destination
+     colour so the gradient interpolates purely on alpha — without that,
+     interpolating between transparent-white and the dark panel would pass
+     through a muddy mid-grey halfway through. */
+  background: linear-gradient(to bottom, rgba(36, 36, 36, 0) 0%, var(--dc-panel) 100%);
+}
+.chat-msg.mine.collapsed .msg-content::after {
+  background: linear-gradient(to bottom, rgba(201, 168, 76, 0) 0%, var(--dc-gold) 100%);
+}
+
+/* ── Side gutter icon group (PC follow-mouse + mobile big-bubble anchors) ── */
+.bubble-icons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 2;
+  pointer-events: auto;
+}
+.bubble-icons-side {
+  position: absolute;
+  transform: translateY(-50%);
+  background: rgba(20, 20, 20, 0.65);
+  border-radius: 18px;
+  padding: 2px;
+  backdrop-filter: blur(4px);
+}
+/* Positive offsets — icons sit INSIDE the wrap's padding gutter so the
+   wrap's bounding box (and therefore the @mouseleave trigger) includes
+   them. side-right is used when the bubble is non-mine (gutter is the
+   wrap's right padding); side-left when mine (gutter on the left). */
+.bubble-icons-side.side-right {
+  right: 2px;
+}
+.bubble-icons-side.side-left {
+  left: 2px;
+}
+/* Mobile + tall bubble: fixed anchors at top / bottom of the side */
+.bubble-icons-anchor-top {
+  top: 28px;
+}
+.bubble-icons-anchor-bottom {
+  top: auto;
+  bottom: 28px;
+  transform: translateY(50%);
+}
+/* Mobile + short bubble: a single group centred vertically on the bubble side */
+.bubble-icons-anchor-center {
+  top: 50%;
 }
 </style>
