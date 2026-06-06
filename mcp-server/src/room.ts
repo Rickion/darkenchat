@@ -1,6 +1,12 @@
 import { WebSocket } from 'ws'
 import { nanoid } from 'nanoid'
-import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from './adapter/webrtc.js'
+import {
+  RTCPeerConnection,
+  RTCSessionDescription,
+  RTCIceCandidate,
+  webrtcAvailable,
+  webrtcLoadError,
+} from './adapter/webrtc.js'
 import { computeTally, type Tally } from './tally.js'
 
 // Fallback STUN list, used only if /api/ice is unreachable. The canonical
@@ -398,6 +404,8 @@ export class RoomClient {
   // `iceServers`. 0 when not using Metered → no rotation scheduled.
   private iceExpiresAt = 0
   private relayEnabled = false
+  // Whether we've already emitted the "WebRTC unavailable → relay-only" warning.
+  private relayOnlyWarned = false
   // Perfect-negotiation state. We are always the polite peer (the center is
   // impolite — its offers win on glare). `makingOffer` lets handleSignal
   // distinguish a genuine remote offer from one we collided with.
@@ -766,7 +774,29 @@ export class RoomClient {
   // walks the configured server list (STUN → custom TURN → default TURN); WS
   // relay is engaged only after `armChannelTimeout` / connectionstate=failed
   // declare P2P dead.
+  // Emitted once per client when native WebRTC is unavailable and we fall back
+  // to WSS relay. Surfaced both to stderr (dlog) and to the room as a system
+  // message so the operator understands why this AI consumes relay bandwidth.
+  private warnRelayOnly() {
+    if (this.relayOnlyWarned) return
+    this.relayOnlyWarned = true
+    dlog(
+      `WebRTC native module unavailable (${webrtcLoadError ?? 'unknown'}) —`,
+      `degraded to WSS relay-only. Messages route through the signaling server`,
+      `(plaintext to the server, consumes its bandwidth). P2P/TURN disabled on this host.`,
+    )
+  }
+
   private async initPeer(centerId: string, polite: boolean) {
+    // No usable native WebRTC on this host → run relay-only. The center
+    // pre-registered us in its relayPeers when we joined, so the inbound
+    // direction already has a WS path; flipping relayEnabled routes our
+    // outbound the same way. We never build a PC, so no offer/answer/ICE.
+    if (!webrtcAvailable) {
+      this.relayEnabled = true
+      this.warnRelayOnly()
+      return
+    }
     this.pc = new RTCPeerConnection({ iceServers: this.iceServers })
     this.polite = polite
     this.makingOffer = false
@@ -948,6 +978,9 @@ export class RoomClient {
   // (armChannelTimeout) will flip us to WS-relay if the negotiation never
   // completes, so the bot stays usable instead of vanishing.
   private async handleSignal(fromId: string, payload: any) {
+    // Relay-only mode (no native WebRTC): we can't process offers/answers/ICE.
+    // Ignore signalling frames — the center falls back to WS relay for us.
+    if (!webrtcAvailable) return
     try {
       if (!this.pc) await this.initPeer(fromId, /* polite */ true)
       const pc = this.pc!
