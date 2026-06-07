@@ -423,14 +423,20 @@ export class RoomClient {
   // via `set_room_config`. 0 means "no limit". When `sentCount` reaches this,
   // `sendMessage` hard-refuses and the AI is told to leave_room immediately.
   private roomTurnLimit = 0
-  // Auto round-complete guard. Records the normalised POSITION we last
-  // emitted a ROUND_COMPLETE message for. ROUND_COMPLETE fires once per
-  // *distinct converged position*: if the panel later converges on a
-  // different position (a new topic), the guard naturally re-arms. This
-  // replaces the old explicit ROUND counter — no round number anywhere,
-  // and the signal comes from the tally (computed) rather than from the
-  // AI remembering to bump a header.
+  // Auto round-complete guard. Records the normalised LABEL of the cluster we
+  // last emitted a ROUND_COMPLETE message for. ROUND_COMPLETE fires once per
+  // *distinct converged topic*: if the panel later converges on a different
+  // topic (a cluster with a different label), the guard naturally re-arms.
+  // The signal comes from the tally's agreement clustering (computed) rather
+  // than from the AI remembering to bump a header.
   private lastConvergedPosition = ''
+  // Floor for "what has the AI been shown". Advanced by getMessages /
+  // waitForMention as they hand messages to the AI. sendMessage uses it to
+  // detect a "stale send" — if a message mentioning this AI arrived between
+  // its last read and its compose, that reply is likely based on outdated
+  // context, so we refuse the send and force the AI to reconsider. See
+  // `pendingMentionsForMe` and the unseen_mentions branch in sendMessage.
+  private lastDeliveredTs = 0
 
   // Public introspection -----------------------------------------------------
   getStatus(): RoomStatus {
@@ -487,6 +493,9 @@ export class RoomClient {
     this.nickname = nickname
     this.intentionalShutdown = false
     this.reconnectAttempts = 0
+    // Backlog before this join is not "unread" — anchor the floor to now so
+    // sendMessage doesn't immediately fire unseen_mentions on join.
+    this.lastDeliveredTs = Date.now()
 
     const fetched = await fetchIceServers(serverUrl)
     this.iceServers = fetched.ice
@@ -1052,26 +1061,29 @@ export class RoomClient {
   }
 
   // Detects auto round-completion after every inbound chat message. Fires
-  // at most once per *distinct converged position*. Definition: ≥75% of all
-  // AI members in the room share, in their latest stance, the same
-  // normalised POSITION. The synthetic system message ("ROUND_COMPLETE: …")
-  // wakes every waiter and signals the panel that *this round* is done — it
-  // does NOT signal exit; the room stays open for the next topic. If the
-  // panel later converges on a *different* position, the guard re-arms and
-  // a fresh ROUND_COMPLETE fires — that's how multi-topic panels work, with
-  // no round counter to maintain. AIs are instructed (see tools.ts
-  // AGENT_RULES) to acknowledge briefly and keep polling.
+  // at most once per *distinct converged topic*. Definition: the largest
+  // AGREEMENT CLUSTER (bots transitively linked by `agreeWith`) covers ≥75%
+  // of all AI members and is not contested by an internal `disagreeWith`.
+  // Consensus is judged on the agreement graph, NOT on matching position
+  // text, so AIs no longer have to copy each other's exact wording. The
+  // synthetic system message ("ROUND_COMPLETE: …") wakes every waiter and
+  // signals the panel that *this round* is done — it does NOT signal exit;
+  // the room stays open for the next topic. If the panel later converges on a
+  // *different* topic (different cluster label), the guard re-arms and a fresh
+  // ROUND_COMPLETE fires. AIs are instructed (see tools.ts AGENT_RULES) to
+  // acknowledge briefly and keep polling.
   private maybeEmitConsensus() {
     if (!this.session) return
     const tally = computeTally(this.history, this.session.members)
     if (tally.totalAiMembers < 2) return
     const top = tally.stances[0]
     if (!top) return
+    if (top.contested) return // largest cluster is internally disputed → no consensus
     if (top.supporters.length < tally.consensusThreshold) return
     if (top.positionNorm === this.lastConvergedPosition) return
     this.lastConvergedPosition = top.positionNorm
     this.emitSystem(
-      `ROUND_COMPLETE: panel converged on: ${top.examplePosition}. The room stays open. ` +
+      `ROUND_COMPLETE: panel converged on: ${top.label}. The room stays open. ` +
         `If you have a final addition or correction, send it now; otherwise reply briefly with ` +
         `"Confirmed, no further comments" and keep polling for the next topic or follow-up. ` +
         `Do NOT leave_room — only leave on terminal roomStatus or an explicit request from the human.`,
@@ -1272,7 +1284,7 @@ export class RoomClient {
     content: string,
     mentions?: MentionRef[],
     stance?: MessageStance,
-  ): SendOk | { ok: false; error: string } {
+  ): SendOk | { ok: false; error: string; unseen?: IncomingMessage[] } {
     if (!this.session) return { ok: false, error: 'Not joined' }
     if (!this.isActive()) return { ok: false, error: `Room status: ${this.status}` }
     if (this.roomTurnLimit > 0 && this.sentCount >= this.roomTurnLimit) {
@@ -1281,6 +1293,25 @@ export class RoomClient {
         error:
           `room_turn_limit_reached: this AI has spoken ${this.sentCount}/${this.roomTurnLimit} ` +
           `turns in this room (hard cap set by the chair). Stop sending and call leave_room.`,
+      }
+    }
+
+    // Stale-send guard: if a chat message mentioning this AI arrived after the
+    // AI's last get_messages / wait_for_mention return, the reply it composed
+    // is based on outdated context. Hand the new messages back and let the AI
+    // decide again. Advancing lastDeliveredTs before returning means a
+    // retry-as-is wouldn't loop forever — the second attempt sees an empty
+    // pending list and goes through. System messages and the bot's own
+    // messages don't count (see pendingMentionsForMe).
+    const pending = this.pendingMentionsForMe()
+    if (pending.length > 0) {
+      this.markDelivered(pending)
+      return {
+        ok: false,
+        error:
+          `unseen_mentions: ${pending.length} new message(s) mentioning you arrived while you were composing. ` +
+          `Read them in \`unseen\` and decide whether your reply is still appropriate before retrying send_message.`,
+        unseen: pending,
       }
     }
 
@@ -1346,7 +1377,32 @@ export class RoomClient {
 
   getMessages(limit = 20, since?: number): IncomingMessage[] {
     const filtered = since ? this.history.filter(m => m.timestamp > since) : this.history
-    return filtered.slice(-limit)
+    const slice = filtered.slice(-limit)
+    this.markDelivered(slice)
+    return slice
+  }
+
+  // Push the "what AI has seen" floor forward. Called by every tool that hands
+  // messages to the AI. Monotonic — never moves backward (a backlog scan
+  // shouldn't un-mark fresh messages as unread).
+  private markDelivered(msgs: IncomingMessage[]): void {
+    if (msgs.length === 0) return
+    let max = this.lastDeliveredTs
+    for (const m of msgs) if (m.timestamp > max) max = m.timestamp
+    if (max > this.lastDeliveredTs) this.lastDeliveredTs = max
+  }
+
+  // Chat messages mentioning me that arrived after lastDeliveredTs. Used by
+  // sendMessage to detect a stale send. Excludes:
+  //   • system messages — they don't change reply context (and we already
+  //     ROUND_COMPLETE-throttle the noisy ones)
+  //   • my own messages — sending my own reply doesn't invalidate itself
+  private pendingMentionsForMe(): IncomingMessage[] {
+    const me = this.session?.clientId
+    if (!me) return []
+    return this.history.filter(
+      m => m.timestamp > this.lastDeliveredTs && !m.isSystem && m.fromId !== me && m.mentionedMe,
+    )
   }
 
   /**
@@ -1371,7 +1427,10 @@ export class RoomClient {
     }
     // Last-50 cap on the synchronous backlog return — see method docstring.
     const existing = this.history.filter(matcher).slice(-50)
-    if (existing.length > 0) return Promise.resolve(existing)
+    if (existing.length > 0) {
+      this.markDelivered(existing)
+      return Promise.resolve(existing)
+    }
     if (!this.isActive()) return Promise.resolve([])
 
     return new Promise<IncomingMessage[]>(resolve => {
@@ -1381,6 +1440,9 @@ export class RoomClient {
         resolve([])
       }, timeoutMs)
       this.waiters.push(entry)
+    }).then(msgs => {
+      this.markDelivered(msgs)
+      return msgs
     })
   }
 

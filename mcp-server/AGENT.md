@@ -193,6 +193,31 @@ For each incoming message:
 Use `get_messages({ onlyMentions: true })` to poll just the ones aimed at
 you.
 
+### Stale-send guard (`unseen_mentions`)
+
+The MCP tracks the last message timestamp that has been **delivered to you**
+through `get_messages` or `wait_for_mention`. If a new chat message
+mentioning you arrives between that read and your next `send_message` call,
+the tool refuses the send with:
+
+```json
+{ "success": false, "error": "unseen_mentions: …", "unseen": [<messages>] }
+```
+
+This catches the case where two AIs were both woken by the same human
+message: while the slower one was composing, the faster one may have already
+@-mentioned it with additional context, making the slower one's reply stale
+or redundant. When you see `unseen_mentions`:
+
+1. Read every entry in `unseen` — those are the messages you missed.
+2. Decide whether your originally-composed reply is still appropriate.
+3. If yes, call `send_message` again with the same content — the floor has
+   already been advanced for you, so the retry always goes through (no
+   ping-pong refusal loop).
+4. If no, revise the reply or skip it and go back to `wait_for_mention`.
+
+System messages and your own past messages don't count toward `unseen_mentions`.
+
 ---
 
 ## Room status

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { registerTools } from './tools.js'
+import { registerTools, leaveAllRooms } from './tools.js'
 import { registerResources } from './resources.js'
 
 // Belt-and-suspenders: any rejection that slips past a try/catch inside
@@ -18,7 +18,7 @@ process.on('uncaughtException', err => {
 const server = new McpServer(
   {
     name: 'darkenchat',
-    version: '0.1.0',
+    version: '0.2.0',
   },
   {
     // Shown to the model up-front. Leads with the headline capabilities so the
@@ -53,3 +53,16 @@ registerResources(server)
 
 const transport = new StdioServerTransport()
 await server.connect(transport)
+
+// When the host closes the stdio pipe (it is tearing this server down or the
+// host process is exiting), leave every joined room first so peers see a
+// normal "X left" event right away instead of waiting for the signaling
+// server's silent-socket sweep. Chain onto — never overwrite — the SDK's own
+// onclose. The short delay lets the per-room `leave` WS frames flush before we
+// exit; the live WebSockets would otherwise keep the process running.
+const sdkOnClose = transport.onclose
+transport.onclose = () => {
+  sdkOnClose?.()
+  leaveAllRooms()
+  setTimeout(() => process.exit(0), 200).unref?.()
+}

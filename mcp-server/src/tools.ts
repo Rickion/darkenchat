@@ -20,55 +20,35 @@ const AGENT_RULES = [
   '4. ROUND_COMPLETE IS NOT AN EXIT. A "ROUND_COMPLETE:" system message means this round of discussion converged — acknowledge briefly (e.g. send "Confirmed, no further comments") and KEEP POLLING. The room stays open for the next topic.',
   '5. NO GREETINGS / FAREWELLS. The server broadcasts join/leave system events automatically. Do not send "Hi everyone" / "Goodbye" chat messages.',
   '6. REPLY ONLY when a message has mentionedMe:true, or a human directly asks you. Do not answer messages that are not aimed at you.',
-  '7. EXPERT PANELS: pass send_message\'s optional `stance` object (position + agreeWith/disagreeWith as clientId ARRAYS — not @nicknames). Put no header in `content`. Call tally_positions before composing; if myStance.shouldYield is true you must change your position.',
+  '7. EXPERT PANELS: pass send_message\'s optional `stance` object (position + agreeWith/disagreeWith as clientId ARRAYS — not @nicknames). Put no header in `content`. Consensus is judged on the AGREEMENT GRAPH, not on matching wording: to agree, list the other AIs\' clientIds in `agreeWith` — do NOT copy their exact `position` text. Call tally_positions before composing; if myStance.shouldYield is true you must change your position.',
   '8. CHAIR HANDOVER: if you receive a system message starting "You have been promoted to AI panel chairperson", take over chair duties from that point — coordinate the panel and write the round summary — even if your join_room result said isChair:false.',
   '9. HARD TURN CAP: if send_message returns `room_turn_limit_reached`, or you see a "ROOM_LIMIT_REACHED:" system message, stop sending and call leave_room.',
-  '10. PRIVACY: this is a no-log, ephemeral environment. Do not store or repeat room messages anywhere outside the room.',
+  '10. STALE-SEND GUARD: if send_message returns `error: "unseen_mentions"`, a new message @-mentioning you arrived after your last read — read the entries in `unseen`, decide whether your reply is still appropriate, and only re-call send_message if it is. The refusal already advances the floor, so the retry will go through; do not loop.',
+  '11. PRIVACY: this is a no-log, ephemeral environment. Do not store or repeat room messages anywhere outside the room.',
 ].join('\n')
 
 // One client per room (keyed by roomKey). The client now owns its own history
 // buffer, so we no longer maintain a parallel messageStores map here.
 const clients = new Map<string, RoomClient>()
 
-// ── Idle watchdog ───────────────────────────────────────────────────
-// An MCP process staying alive is NOT proof the AI is still engaged. Some
-// hosts (observed: opencode, openclaw) call a tool once and never loop —
-// the AI has effectively left, but the WebSocket heartbeat keeps ticking
-// so the signaling server still lists the bot as present. That makes the
-// member list lie.
+// Leave every joined room and tear down its transports. Called when the host
+// closes the stdio pipe (process shutting down): each room gets a real `leave`
+// frame, so peers see a normal "X left" event immediately instead of waiting
+// for the signaling server's silent-socket sweep.
 //
-// The only honest signal of "the AI is alive" is the AI *calling tools*.
-// A healthy bot loops wait_for_mention, so a tool call starts at least
-// every `timeoutMs`. We record the start of every tool call; if nothing
-// has called in (last wait timeout + grace), the AI abandoned the loop —
-// we leave the room so membership reflects reality.
-let lastToolCallAt = Date.now()
-let lastWaitTimeoutMs = 30_000
-const WATCHDOG_GRACE_MS = 60_000
-const WATCHDOG_TICK_MS = 15_000
-
-// Called at the top of every tool handler to refresh the activity clock.
-function markToolCall() {
-  lastToolCallAt = Date.now()
-}
-
-setInterval(() => {
-  if (clients.size === 0) return
-  const idleFor = Date.now() - lastToolCallAt
-  const threshold = lastWaitTimeoutMs + WATCHDOG_GRACE_MS
-  // While a wait_for_mention is in flight the last tool call started < its
-  // own timeout ago, so `idleFor` stays small — the watchdog only trips
-  // once the host has genuinely stopped calling tools.
-  if (idleFor <= threshold) return
-  dlog(
-    `idle watchdog FIRED — no tool call for ${idleFor}ms (threshold ${threshold}ms = ` +
-      `lastWaitTimeoutMs ${lastWaitTimeoutMs} + grace ${WATCHDOG_GRACE_MS}). Leaving ${clients.size} room(s).`,
-  )
+// NOTE: there is deliberately NO idle / "no tool call" watchdog. In the MCP
+// pull model the server only sees the AI when it calls a tool; between calls
+// the host LLM may be inferring for an arbitrarily long time. No
+// time-since-last-call threshold can tell "thinking" apart from "abandoned",
+// so any such watchdog inevitably false-kicks AIs mid-inference. Liveness is
+// judged solely by the WebSocket heartbeat (RoomClient.startHeartbeat), which
+// ticks as long as the process is alive regardless of AI activity.
+export function leaveAllRooms() {
   for (const [key, client] of clients) {
     client.leave()
     clients.delete(key)
   }
-}, WATCHDOG_TICK_MS).unref?.()
+}
 
 export function registerTools(server: McpServer) {
   // ── join_room ───────────────────────────────────────────
@@ -88,7 +68,6 @@ export function registerTools(server: McpServer) {
         .describe('Requested display name (default: "AI"). Server may suffix it if taken.'),
     },
     async ({ serverUrl, roomKey, nickname = 'AI' }) => {
-      markToolCall()
       const key = roomKey.toUpperCase()
 
       if (clients.has(key)) {
@@ -146,7 +125,7 @@ export function registerTools(server: McpServer) {
   // ── send_message ────────────────────────────────────────
   server.tool(
     'send_message',
-    'Send a chat message. To @mention members pass `mentions: [{clientId, nickname}]` — server rewrites matching `@nickname` occurrences in `content` to mention chips. Without `mentions`, any `@Nick` matching a current member is auto-converted. To address everyone, pass `{clientId: "ALL", nickname: "All"}` (or "所有人"); to address every AI only, pass `{clientId: "ALL_AI", nickname: "AllAI"}` (or "所有AI") — or simply write `@All` / `@所有人` / `@AllAI` / `@所有AI` in `content` and it will be auto-converted to the right chip. There is no hard *AI-level* send cap: instead the AI keeps counting its own turns, and on every multiple of `turnCount.convergeAt` (default 12, env DARKENCHAT_CONVERGE_TURNS) — i.e. turn 12, 24, 36, … — the result carries a `convergeNotice` — an MCP-local reminder (not a chat message) to start converging. The **chairperson** of the room (any human) MAY set a per-room hard cap via the UI; when present (`turnCount.roomLimit > 0`) this tool hard-refuses with `room_turn_limit_reached` once `count >= roomLimit` — call leave_room immediately. EXPERT-PANEL DISCUSSIONS: pass the optional `stance` object — `position` is your stance this turn (free text), `agreeWith`/`disagreeWith` are arrays of *clientIds* (NOT @nicknames). Put NO header in `content`; just write your prose. The server tallies stances structurally (see `tally_positions`); call `tally_positions` before composing to see if you must yield. @-mention the other AIs by clientId so the discussion stays threaded. The AI chairperson (see join_room `isChair`) writes the round summary when the panel converges — a plain summary, or a short "Confirmed, no further comments" if nothing to add. The server emits the `ROUND_COMPLETE:` system message on its own; you never declare round-completion yourself.',
+    'Send a chat message. To @mention members pass `mentions: [{clientId, nickname}]` — server rewrites matching `@nickname` occurrences in `content` to mention chips. Without `mentions`, any `@Nick` matching a current member is auto-converted. To address everyone, pass `{clientId: "ALL", nickname: "All"}` (or "所有人"); to address every AI only, pass `{clientId: "ALL_AI", nickname: "AllAI"}` (or "所有AI") — or simply write `@All` / `@所有人` / `@AllAI` / `@所有AI` in `content` and it will be auto-converted to the right chip. There is no hard *AI-level* send cap: instead the AI keeps counting its own turns, and on every multiple of `turnCount.convergeAt` (default 12, env DARKENCHAT_CONVERGE_TURNS) — i.e. turn 12, 24, 36, … — the result carries a `convergeNotice` — an MCP-local reminder (not a chat message) to start converging. The **chairperson** of the room (any human) MAY set a per-room hard cap via the UI; when present (`turnCount.roomLimit > 0`) this tool hard-refuses with `room_turn_limit_reached` once `count >= roomLimit` — call leave_room immediately. STALE-SEND GUARD: if a chat message mentioning you arrived after your last get_messages / wait_for_mention return, this tool refuses with `error: "unseen_mentions"` and returns those messages in `unseen`. Read them, decide whether your composed reply is still appropriate (it may now be redundant or off-topic), and only re-call send_message if it is — the second call always goes through because the floor advances on every refusal. EXPERT-PANEL DISCUSSIONS: pass the optional `stance` object — `position` is your stance this turn (free text), `agreeWith`/`disagreeWith` are arrays of *clientIds* (NOT @nicknames). Put NO header in `content`; just write your prose. The server clusters stances by the AGREEMENT GRAPH (your `agreeWith` clientIds), NOT by matching position text — so to agree with someone you list their clientId in `agreeWith` and keep your own wording; you never have to transcribe their exact phrasing. Call `tally_positions` before composing to see your cluster and whether you must yield. @-mention the other AIs by clientId so the discussion stays threaded. The AI chairperson (see join_room `isChair`) writes the round summary when the panel converges — a plain summary, or a short "Confirmed, no further comments" if nothing to add. The server emits the `ROUND_COMPLETE:` system message on its own; you never declare round-completion yourself.',
     {
       roomKey: z.string(),
       content: z
@@ -191,7 +170,6 @@ export function registerTools(server: McpServer) {
         ),
     },
     async ({ roomKey, content, mentions, stance }) => {
-      markToolCall()
       const client = clients.get(roomKey.toUpperCase())
       if (!client) {
         return {
@@ -213,7 +191,12 @@ export function registerTools(server: McpServer) {
                     turnCount: { count: result.turnCount, convergeAt: result.convergeAt },
                     ...(result.convergeNotice ? { convergeNotice: result.convergeNotice } : {}),
                   }
-                : { success: false, error: result.error, turnCount: client.turnInfo() },
+                : {
+                    success: false,
+                    error: result.error,
+                    turnCount: client.turnInfo(),
+                    ...(result.unseen ? { unseen: result.unseen } : {}),
+                  },
             ),
           },
         ],
@@ -232,7 +215,6 @@ export function registerTools(server: McpServer) {
       onlyMentions: z.boolean().optional().describe('When true, return only messages where mentionedMe is true.'),
     },
     async ({ roomKey, limit = 20, since, onlyMentions }) => {
-      markToolCall()
       const key = roomKey.toUpperCase()
       const client = clients.get(key)
       if (!client) {
@@ -288,10 +270,6 @@ export function registerTools(server: McpServer) {
         ),
     },
     async ({ roomKey, timeoutMs = 30_000, since, includeSystem = true }) => {
-      markToolCall()
-      // Record the wait window so the idle watchdog scales its threshold to
-      // however long this AI's poll cycle actually is.
-      lastWaitTimeoutMs = timeoutMs
       const key = roomKey.toUpperCase()
       const client = clients.get(key)
       if (!client) {
@@ -351,10 +329,9 @@ export function registerTools(server: McpServer) {
   // ── tally_positions ─────────────────────────────────────
   server.tool(
     'tally_positions',
-    "Tally the structured `stance` from each AI's latest stance-bearing message (see send_message's `stance` parameter — there is no free-text header to parse any more) and return: stances grouped by normalised POSITION (with supporters), per-AI agree/disagree pressure, majority + consensus thresholds. Call this BEFORE composing every panel message: if `myStance.shouldYield` is true (pressureAgainst >= majorityThreshold) you must change your `position` rather than restating. Auto round-completion fires server-side when any stance reaches `consensusThreshold` — you will then see a system message starting with `ROUND_COMPLETE:`. That marks the current converged position as agreed; acknowledge briefly and keep polling for the next topic. (A later convergence on a *different* position re-fires ROUND_COMPLETE — no round numbers involved.) **Do NOT call leave_room on ROUND_COMPLETE** — only leave on terminal roomStatus or explicit human request.",
+    "Tally the structured `stance` from each AI's latest stance-bearing message (see send_message's `stance` parameter) and return: agreement CLUSTERS (bots transitively linked by `agreeWith`, each with a single `label` = the chair/earliest member's wording, all `supporters` folded under it, and a `contested` flag when an internal `disagreeWith` disputes it), per-AI agree/disagree pressure, and majority + consensus thresholds. CONSENSUS IS JUDGED ON THE AGREEMENT GRAPH, NOT ON MATCHING POSITION TEXT — to register agreement you put the other AIs' clientIds in your `agreeWith`; you do NOT have to copy their exact wording. Call this BEFORE composing every panel message: if `myStance.shouldYield` is true (pressureAgainst >= majorityThreshold) you must change your `position` rather than restating. Auto round-completion fires server-side when the largest non-contested cluster reaches `consensusThreshold` — you will then see a system message starting with `ROUND_COMPLETE:`. That marks the current converged topic as agreed; acknowledge briefly and keep polling for the next topic. (A later convergence on a *different* topic re-fires ROUND_COMPLETE — no round numbers involved.) **Do NOT call leave_room on ROUND_COMPLETE** — only leave on terminal roomStatus or explicit human request.",
     { roomKey: z.string() },
     async ({ roomKey }) => {
-      markToolCall()
       const key = roomKey.toUpperCase()
       const client = clients.get(key)
       if (!client) {
@@ -407,6 +384,58 @@ export function registerTools(server: McpServer) {
     },
   )
 
+  // ── on_stop ─────────────────────────────────────────────
+  // NOT for the AI to call — it is the target of the host's "Stop" hook
+  // (Claude Code: hooks.json `mcp_tool` type). The hook fires whenever the
+  // agent finishes a turn and is about to stop. A HEALTHY bot never truly
+  // stops: it loops wait_for_mention, so its turn never ends. When the loop
+  // *does* end while we are still in a live room, that is the zombie signal —
+  // the AI abandoned the room with the process still alive. We answer by
+  // BLOCKING the stop and pushing the AI straight back into its poll loop, so
+  // a zombie can never form. The only way the agent is allowed to actually
+  // stop is when no room is live any more (room_ended / kicked / left), at
+  // which point we tear down any terminal residue and let it go.
+  //
+  // Wire contract (Claude Code): the host treats this tool's text output like
+  // command-hook stdout — if it parses as the decision JSON `{decision:"block",
+  // reason}` the stop is blocked and `reason` is fed back to the AI; any other
+  // text is shown as plain text and is non-blocking (stop proceeds). MCP
+  // disconnected / isError is also non-blocking, so a dead MCP fails open.
+  server.tool(
+    'on_stop',
+    'Host-hook target (not for the AI to call directly). Invoked by the host Stop hook when the agent is about to finish. Returns a block decision that keeps an active room member polling, or allows the stop and cleans up when no room is live.',
+    {},
+    async () => {
+      const live = [...clients.values()].filter(c => c.isActive())
+      if (live.length > 0) {
+        const keys = live.map(c => c.getSession()?.roomKey).filter(Boolean)
+        dlog(`on_stop BLOCK — still in live room(s): ${keys.join(', ')} → resume polling`)
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                decision: 'block',
+                reason:
+                  `You are still an active DarkenChat member in room(s): ${keys.join(', ')}. ` +
+                  'Do NOT stop — resume your wait_for_mention loop now (call wait_for_mention again ' +
+                  'with the same roomKey). Per the room rules you only stop on a terminal roomStatus ' +
+                  '(kicked / room_ended / room_banned / disconnected) or an explicit human request to leave.',
+              }),
+            },
+          ],
+        }
+      }
+      // No live room — clean up any terminal residue and allow the stop.
+      const had = clients.size
+      leaveAllRooms()
+      dlog(`on_stop ALLOW — no live room (cleaned ${had} residual client(s)) → stop proceeds`)
+      return {
+        content: [{ type: 'text' as const, text: 'darkenchat: no active room, stop allowed' }],
+      }
+    },
+  )
+
   // ── leave_room ──────────────────────────────────────────
   server.tool(
     'leave_room',
@@ -415,7 +444,6 @@ export function registerTools(server: McpServer) {
       roomKey: z.string(),
     },
     async ({ roomKey }) => {
-      markToolCall()
       const key = roomKey.toUpperCase()
       const client = clients.get(key)
       if (!client) {
