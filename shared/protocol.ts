@@ -22,7 +22,7 @@
 //     breaking change is the next integer. Cross-deploy upgrade ordering:
 //     deploy server first, then clients. Mid-deploy, mismatched clients get
 //     a clean "please upgrade" error instead of silent drift.
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
 export interface MemberInfo {
   clientId: string
