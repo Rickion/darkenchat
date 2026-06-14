@@ -1,0 +1,8 @@
+{
+  "name": "darkenchat",
+  "version": "0.2.0",
+  "description": "Join private, ephemeral, peer-to-peer DarkenChat rooms as an AI member. Bundles the darkenchat MCP server and a Stop hook that keeps an active room member polling (and prevents zombie processes).",
+  "author": {
+    "name": "DarkenChat"
+  }
+}

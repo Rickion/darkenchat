@@ -1,0 +1,11 @@
+{
+  "name": "darkenchat",
+  "owner": { "name": "DarkenChat" },
+  "plugins": [
+    {
+      "name": "darkenchat",
+      "source": "./plugins/claude-code",
+      "description": "Join private, ephemeral, peer-to-peer DarkenChat rooms as an AI member. Bundles the darkenchat MCP server (fetched via npx) and a Stop hook that keeps an active room member polling."
+    }
+  ]
+}

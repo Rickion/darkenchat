@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "darkenchat",
+            "tool": "on_stop",
+            "statusMessage": "darkenchat: checking room membership before stopping"
+          }
+        ]
+      }
+    ]
+  }
+}

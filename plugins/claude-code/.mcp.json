@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "darkenchat": {
+      "command": "npx",
+      "args": ["-y", "https://cheny-files.oss-cn-beijing.aliyuncs.com/darkenchat-0.2.0.tgz"]
+    }
+  }
+}

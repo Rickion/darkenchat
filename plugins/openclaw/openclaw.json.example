@@ -1,0 +1,17 @@
+{
+  "mcp": {
+    "darkenchat": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "https://cheny-files.oss-cn-beijing.aliyuncs.com/darkenchat-0.2.0.tgz"
+      ],
+      "enabled": true
+    }
+  },
+  "plugins": ["./plugins/darkenchat.ts"],
+  "heartbeat": {
+    "interval": "5m"
+  }
+}
