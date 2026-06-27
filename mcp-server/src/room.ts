@@ -38,6 +38,13 @@ const CHANNEL_OPEN_TIMEOUT_MS = 10_000
 const CONVERGE_TURNS = Math.max(1, Number(process.env.DARKENCHAT_CONVERGE_TURNS ?? '12') || 12)
 // History buffer cap for tally / get_messages / wait_for_mention.
 const HISTORY_CAP = 500
+// Directed file-transfer control types (mirrors the browser's
+// DIRECTED_FILE_TYPES). These carry a `to` clientId and ride the same data
+// plane as chat; the center forwards them. The MCP only ever *requests* media
+// (file_request) and consumes the chunk stream — it never hosts files.
+const DIRECTED_FILE_TYPES = new Set(['file_request', 'file_chunk', 'file_end', 'file_error'])
+// Give up on a fetch_media pull after this long with no further chunks.
+const FETCH_MEDIA_TIMEOUT_MS = 120_000
 // Silent reconnect parameters. When the signaling WebSocket drops (network
 // blip, signaling restart, …) we re-open and re-join with `lastClientId` so
 // the AI's wait_for_mention loop never sees a premature
@@ -139,7 +146,35 @@ export interface MessageStance {
   disagreeWith?: string[] // clientIds this AI disagrees with
 }
 
+// A media attachment carried by a `type:'file'` message. `mediaId` is the
+// natural id the owner keyed the file under (= the browser's fileId); pass it
+// to the fetch_media tool to pull the bytes. `ownerId` is the clientId we route
+// the file_request to.
+export interface MediaRef {
+  mediaId: string
+  name: string
+  mime: string
+  size: number
+  ownerId: string
+}
+
+// A reply-to reference attached to a message. Mirrors the browser MessageQuote:
+// `messageId` points at the quoted message and `mediaId` is that message's
+// fileId when it quoted a media attachment (so the AI can fetch_media it).
+export interface QuoteRef {
+  messageId: string
+  mediaId?: string
+  fromNick: string
+  preview: string
+}
+
 export interface IncomingMessage {
+  // Present on every message we surface; lets the AI tell chat from file/voice/
+  // forward. Defaults to 'chat' for our own buffered sends.
+  type?: 'chat' | 'system' | 'file' | 'voice' | 'forward'
+  // Stable message id (from the wire payload). Needed so the AI can reference a
+  // message and so quote.messageId can be matched against history.
+  id?: string
   from: string
   fromId: string
   timestamp: number
@@ -149,6 +184,35 @@ export interface IncomingMessage {
   mentionedMe?: boolean
   transport?: 'p2p' | 'relay'
   stance?: MessageStance // present on expert-panel messages
+  media?: MediaRef // present on type:'file' messages
+  quote?: QuoteRef // present when this message replied-to another
+}
+
+/** Map a wire `meta` FileMeta blob to a MediaRef. Returns undefined if malformed. */
+function parseMedia(raw: unknown): MediaRef | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Record<string, unknown>
+  if (typeof r.fileId !== 'string' || typeof r.ownerId !== 'string') return undefined
+  return {
+    mediaId: r.fileId,
+    name: typeof r.name === 'string' ? r.name : 'file',
+    mime: typeof r.mime === 'string' ? r.mime : 'application/octet-stream',
+    size: typeof r.size === 'number' ? r.size : 0,
+    ownerId: r.ownerId,
+  }
+}
+
+/** Validate a wire `quote` blob. Returns undefined when absent / malformed. */
+function parseQuote(raw: unknown): QuoteRef | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as Record<string, unknown>
+  if (typeof r.messageId !== 'string') return undefined
+  return {
+    messageId: r.messageId,
+    mediaId: typeof r.mediaId === 'string' ? r.mediaId : undefined,
+    fromNick: typeof r.fromNick === 'string' ? r.fromNick : '',
+    preview: typeof r.preview === 'string' ? r.preview : '',
+  }
 }
 
 /** Validate a wire `stance` blob. Returns undefined when absent / malformed. */
@@ -437,6 +501,22 @@ export class RoomClient {
   // context, so we refuse the send and force the AI to reconsider. See
   // `pendingMentionsForMe` and the unseen_mentions branch in sendMessage.
   private lastDeliveredTs = 0
+  // In-flight fetch_media pulls, keyed by mediaId (= fileId). Each entry
+  // accumulates chunk buffers and settles the fetch_media promise when the
+  // stream completes (last chunk) or errors (file_error / timeout).
+  private pendingFetches = new Map<
+    string,
+    {
+      chunks: Buffer[]
+      total: number
+      received: number
+      name: string
+      mime: string
+      resolve: (r: { data: Buffer; name: string; mime: string }) => void
+      reject: (err: Error) => void
+      timer: NodeJS.Timeout
+    }
+  >()
 
   // Public introspection -----------------------------------------------------
   getStatus(): RoomStatus {
@@ -761,7 +841,9 @@ export class RoomClient {
       //      wait_for_mention waiters stay alive; the AI never sees a fake
       //      timeout or premature 'disconnected'. Transport-level retry is
       //      decoupled from the AI's business loop.
-      dlog(`WS 'close' fired — intentionalShutdown=${this.intentionalShutdown} status=${this.status} hasSession=${!!this.session}`)
+      dlog(
+        `WS 'close' fired — intentionalShutdown=${this.intentionalShutdown} status=${this.status} hasSession=${!!this.session}`,
+      )
       if (this.intentionalShutdown) return
       if (!this.session) {
         reject?.(new Error('signaling connection closed before join completed'))
@@ -940,12 +1022,24 @@ export class RoomClient {
       return
     }
 
-    // Drop control plane (file/voice/forward) — AI can't act on these meaningfully.
-    if (parsed.type !== 'chat' && parsed.type !== 'system') return
+    // Directed file-transfer control (file_chunk / file_error from the owner in
+    // response to our fetch_media file_request). Consume the chunk stream and
+    // settle the matching pending fetch, then stop — these never become history.
+    if (DIRECTED_FILE_TYPES.has(parsed.type)) {
+      this.handleFileControl(parsed)
+      return
+    }
+
+    // Surface chat/system AND media-bearing types (file/voice/forward). The old
+    // code dropped the latter, which left the AI blind to images and replies.
+    const KNOWN = new Set(['chat', 'system', 'file', 'voice', 'forward'])
+    if (!KNOWN.has(parsed.type)) return // heartbeat / ack / unknown control
 
     const rawHtml = typeof parsed.content === 'string' ? parsed.content : ''
     const mentions = parseMentions(rawHtml)
     const plain = rawHtml.replace(/<[^>]*>/g, '')
+    const media = parsed.type === 'file' ? parseMedia(parsed.meta) : undefined
+    const quote = parseQuote(parsed.quote)
 
     const me = this.session?.clientId
     // @everyone targets every member and @all-AI targets every bot — since the
@@ -953,21 +1047,170 @@ export class RoomClient {
     const mentionedMe =
       !!me && mentions.some(m => m.clientId === me || m.clientId === MENTION_ALL_ID || m.clientId === MENTION_ALL_AI_ID)
 
+    // Give media/voice/forward a readable `content` so the AI isn't handed an
+    // empty string when the wire payload had none.
+    let content = plain
+    if (!content) {
+      if (media) content = `[${media.mime} attachment: ${media.name}]`
+      else if (parsed.type === 'voice') content = '[voice session]'
+      else if (parsed.type === 'forward') content = '[forwarded messages]'
+    }
+
     const out: IncomingMessage = {
+      type: parsed.type,
+      id: typeof parsed.id === 'string' ? parsed.id : undefined,
       from: parsed.from ?? '',
       fromId: parsed.fromId ?? '',
       timestamp: parsed.timestamp ?? Date.now(),
-      content: plain,
+      content,
       isSystem: !!parsed.isSystem,
       mentions: mentions.length ? mentions : undefined,
       mentionedMe: mentionedMe || undefined,
       transport,
       stance: parseStance(parsed.stance),
+      media,
+      quote,
+    }
+    if (media) {
+      dlog(
+        `handleData media message room=${this.session?.roomKey} from=${out.from} ` +
+          `mediaId=${media.mediaId} mime=${media.mime} size=${media.size} owner=${media.ownerId}`,
+      )
     }
     this.pushHistory(out)
     for (const fn of this.listeners) fn(out)
     this.notifyWaiters(out)
     this.maybeEmitConsensus()
+  }
+
+  // ── Directed file-transfer (fetch_media) ─────────────────────────────────
+  // Send a directed control payload toward `to`. The MCP is never the center,
+  // so this always routes through the center (channel first, WS relay fallback),
+  // mirroring the browser's sendDirected for a non-center peer.
+  private sendDirected(to: string, payload: object): boolean {
+    const raw = JSON.stringify({ ...payload, to })
+    if (this.channel?.readyState === 'open') {
+      try {
+        this.channel.send(raw)
+        return true
+      } catch {
+        /* fall through to relay */
+      }
+    }
+    if (this.ws?.readyState === WebSocket.OPEN && this.centerId) {
+      this.relayEnabled = true
+      try {
+        this.ws.send(JSON.stringify({ type: 'relay', to: this.centerId, data: raw }))
+        return true
+      } catch {
+        return false
+      }
+    }
+    return false
+  }
+
+  // Consume file_chunk / file_error frames from a media owner and settle the
+  // matching pending fetch. file_request / file_end are owner-side concerns the
+  // MCP never receives (it only requests), so they're ignored here.
+  private handleFileControl(parsed: any) {
+    const fileId = typeof parsed.fileId === 'string' ? parsed.fileId : ''
+    const entry = this.pendingFetches.get(fileId)
+    if (!entry) return // not a fetch we started (or already settled)
+
+    if (parsed.type === 'file_error') {
+      dlog(`fetch_media file_error room=${this.session?.roomKey} fileId=${fileId} reason=${parsed.reason ?? '?'}`)
+      this.settleFetchReject(fileId, new Error(`owner reported error: ${parsed.reason ?? 'unknown'}`))
+      return
+    }
+
+    if (parsed.type === 'file_chunk') {
+      try {
+        const buf = Buffer.from(String(parsed.data ?? ''), 'base64')
+        const seq = Number(parsed.seq)
+        const total = Number(parsed.total)
+        entry.chunks[seq] = buf
+        entry.received++
+        entry.total = total
+        // Reset the inactivity timer on each chunk.
+        clearTimeout(entry.timer)
+        entry.timer = setTimeout(
+          () => this.settleFetchReject(fileId, new Error('fetch_media timed out waiting for chunks')),
+          FETCH_MEDIA_TIMEOUT_MS,
+        )
+        if (seq === total - 1) {
+          const data = Buffer.concat(entry.chunks.filter(Boolean))
+          dlog(`fetch_media complete room=${this.session?.roomKey} fileId=${fileId} bytes=${data.length}`)
+          clearTimeout(entry.timer)
+          this.pendingFetches.delete(fileId)
+          entry.resolve({ data, name: entry.name, mime: entry.mime })
+        }
+      } catch (e: any) {
+        this.settleFetchReject(fileId, new Error(`chunk decode failed: ${e?.message ?? e}`))
+      }
+    }
+  }
+
+  private settleFetchReject(fileId: string, err: Error) {
+    const entry = this.pendingFetches.get(fileId)
+    if (!entry) return
+    clearTimeout(entry.timer)
+    this.pendingFetches.delete(fileId)
+    entry.reject(err)
+  }
+
+  /**
+   * Pull a media attachment by mediaId (= fileId) from its owner. Looks the
+   * media up in history to find the owner, sends a directed file_request, and
+   * resolves with the reassembled bytes once the chunk stream completes.
+   */
+  fetchMedia(mediaId: string): Promise<{ data: Buffer; name: string; mime: string }> {
+    if (!this.session) return Promise.reject(new Error('Not joined'))
+    if (!this.isActive()) return Promise.reject(new Error(`Room status: ${this.status}`))
+
+    // Find the most recent message carrying this media id.
+    let media: MediaRef | undefined
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const m = this.history[i].media
+      if (m && m.mediaId === mediaId) {
+        media = m
+        break
+      }
+    }
+    if (!media) return Promise.reject(new Error(`No media with id "${mediaId}" in room history`))
+
+    if (media.ownerId === this.session.clientId) {
+      return Promise.reject(new Error('This media was sent by you; the MCP does not host outgoing files'))
+    }
+    const ownerStill = this.session.members.some(m => m.clientId === media!.ownerId)
+    if (!ownerStill) return Promise.reject(new Error('Media owner has left the room; the file is no longer available'))
+
+    if (this.pendingFetches.has(mediaId)) {
+      return Promise.reject(new Error('A fetch for this media is already in progress'))
+    }
+
+    dlog(`fetch_media START room=${this.session.roomKey} mediaId=${mediaId} owner=${media.ownerId} size=${media.size}`)
+    return new Promise<{ data: Buffer; name: string; mime: string }>((resolve, reject) => {
+      const timer = setTimeout(
+        () => this.settleFetchReject(mediaId, new Error('fetch_media timed out waiting for chunks')),
+        FETCH_MEDIA_TIMEOUT_MS,
+      )
+      this.pendingFetches.set(mediaId, {
+        chunks: [],
+        total: 0,
+        received: 0,
+        name: media!.name,
+        mime: media!.mime,
+        resolve,
+        reject,
+        timer,
+      })
+      const sent = this.sendDirected(media!.ownerId, {
+        type: 'file_request',
+        from: this.session!.clientId,
+        fileId: mediaId,
+      })
+      if (!sent) this.settleFetchReject(mediaId, new Error('No transport available to request media'))
+    })
   }
 
   private pushHistory(msg: IncomingMessage) {
@@ -1139,6 +1382,12 @@ export class RoomClient {
       }
       this.waiters = []
     }
+    // Reject any in-flight media fetches — the transport is gone.
+    if (this.pendingFetches.size > 0) {
+      for (const [id] of this.pendingFetches) {
+        this.settleFetchReject(id, new Error(`Room ended (${status}) before media fetch completed`))
+      }
+    }
   }
 
   // Metered.ca temp-credential rotation -------------------------------------
@@ -1243,7 +1492,9 @@ export class RoomClient {
       try {
         this.ws.send(JSON.stringify({ type: 'heartbeat' }))
       } catch (e) {
-        dlog(`heartbeat send failed: ${e instanceof Error ? e.message : String(e)} (ws.readyState=${this.ws?.readyState})`)
+        dlog(
+          `heartbeat send failed: ${e instanceof Error ? e.message : String(e)} (ws.readyState=${this.ws?.readyState})`,
+        )
       }
     }, HEARTBEAT_MS)
   }

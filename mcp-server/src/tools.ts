@@ -1,6 +1,18 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { RoomClient, isServerAllowed, dlog } from './room.js'
+
+// MIME prefixes the MCP can hand back as an inline content block. Anything else
+// (pdf, zip, generic binary) has no inline representation and is returned as a
+// temp-file path instead.
+function inlineKindFor(mime: string): 'image' | 'audio' | null {
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('audio/')) return 'audio'
+  return null
+}
 
 // The authoritative, must-obey rule list, returned in the `instructions`
 // field of every successful join_room call.
@@ -20,7 +32,7 @@ const AGENT_RULES = [
   '4. ROUND_COMPLETE IS NOT AN EXIT. A "ROUND_COMPLETE:" system message means this round of discussion converged — acknowledge briefly (e.g. send "Confirmed, no further comments") and KEEP POLLING. The room stays open for the next topic.',
   '5. NO GREETINGS / FAREWELLS. The server broadcasts join/leave system events automatically. Do not send "Hi everyone" / "Goodbye" chat messages.',
   '6. REPLY ONLY when a message has mentionedMe:true, or a human directly asks you. Do not answer messages that are not aimed at you.',
-  '7. EXPERT PANELS: pass send_message\'s optional `stance` object (position + agreeWith/disagreeWith as clientId ARRAYS — not @nicknames). Put no header in `content`. Consensus is judged on the AGREEMENT GRAPH, not on matching wording: to agree, list the other AIs\' clientIds in `agreeWith` — do NOT copy their exact `position` text. Call tally_positions before composing; if myStance.shouldYield is true you must change your position.',
+  "7. EXPERT PANELS: pass send_message's optional `stance` object (position + agreeWith/disagreeWith as clientId ARRAYS — not @nicknames). Put no header in `content`. Consensus is judged on the AGREEMENT GRAPH, not on matching wording: to agree, list the other AIs' clientIds in `agreeWith` — do NOT copy their exact `position` text. Call tally_positions before composing; if myStance.shouldYield is true you must change your position.",
   '8. CHAIR HANDOVER: if you receive a system message starting "You have been promoted to AI panel chairperson", take over chair duties from that point — coordinate the panel and write the round summary — even if your join_room result said isChair:false.',
   '9. HARD TURN CAP: if send_message returns `room_turn_limit_reached`, or you see a "ROOM_LIMIT_REACHED:" system message, stop sending and call leave_room.',
   '10. STALE-SEND GUARD: if send_message returns `error: "unseen_mentions"`, a new message @-mentioning you arrived after your last read — read the entries in `unseen`, decide whether your reply is still appropriate, and only re-call send_message if it is. The refusal already advances the floor, so the retry will go through; do not loop.',
@@ -154,11 +166,15 @@ export function registerTools(server: McpServer) {
         .object({
           position: z
             .string()
-            .describe('Your stance on the current topic this turn, as free text. The server normalises it for grouping.'),
+            .describe(
+              'Your stance on the current topic this turn, as free text. The server normalises it for grouping.',
+            ),
           agreeWith: z
             .array(z.string())
             .optional()
-            .describe('clientIds of AIs whose position you agree with (from join_room / get_messages member lists). NOT @nicknames.'),
+            .describe(
+              'clientIds of AIs whose position you agree with (from join_room / get_messages member lists). NOT @nicknames.',
+            ),
           disagreeWith: z
             .array(z.string())
             .optional()
@@ -237,6 +253,85 @@ export function registerTools(server: McpServer) {
             }),
           },
         ],
+      }
+    },
+  )
+
+  // ── fetch_media ─────────────────────────────────────────
+  server.tool(
+    'fetch_media',
+    'Pull a media attachment (image / audio / file) that was shared in the room, by its `mediaId`. Media messages surfaced by get_messages / wait_for_mention carry a `media` object — its `media.mediaId` is what you pass here (a quoted message may instead expose the id as `quote.mediaId`). The MCP requests the bytes from the member who owns the file and reassembles them. **mode** controls the return shape: `inline` (default) hands the content straight back as an MCP image/audio block so you can see/hear it in-context — USE THIS FOR IMAGES; `file` writes the bytes to a temp file on the host and returns its path (use for large files, non-displayable types like PDF/zip, or when you want to process the file with another tool). Non-image/non-audio types always come back as a file path regardless of mode. CONTEXT COST: an inline image is expensive in tokens — fetch it once, and prefer delegating heavy image analysis to a sub-agent that returns text rather than re-fetching. Fails if the owner has left the room or the media id is unknown.',
+    {
+      roomKey: z.string(),
+      mediaId: z
+        .string()
+        .describe('The media id to fetch — `media.mediaId` (or `quote.mediaId`) from a message you received.'),
+      mode: z
+        .enum(['inline', 'file'])
+        .optional()
+        .describe(
+          'inline (default): return the bytes as an MCP image/audio content block. file: write to a host temp file and return the path. Non-image/audio media is always returned as a file path.',
+        ),
+    },
+    async ({ roomKey, mediaId, mode = 'inline' }) => {
+      const key = roomKey.toUpperCase()
+      const client = clients.get(key)
+      if (!client) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'Not in this room' }) }],
+        }
+      }
+      dlog(`fetch_media ENTER room=${key} mediaId=${mediaId} mode=${mode}`)
+      try {
+        const { data, name, mime } = await client.fetchMedia(mediaId)
+        const inlineKind = inlineKindFor(mime)
+
+        if (mode === 'inline' && inlineKind) {
+          dlog(`fetch_media EXIT room=${key} mediaId=${mediaId} → inline ${inlineKind} (${data.length} bytes)`)
+          return {
+            content: [
+              { type: inlineKind as 'image' | 'audio', data: data.toString('base64'), mimeType: mime },
+              {
+                type: 'text' as const,
+                text: JSON.stringify({ success: true, mediaId, name, mime, size: data.length, mode: 'inline' }),
+              },
+            ],
+          }
+        }
+
+        // file mode, or a type with no inline representation.
+        const safeName = name.replace(/[^\w.\-]+/g, '_').slice(-100) || 'media'
+        const path = join(tmpdir(), `darkenchat-${mediaId}-${safeName}`)
+        await writeFile(path, data)
+        const note =
+          mode === 'inline' && !inlineKind
+            ? 'Type is not image/audio — returned as a file path instead of an inline block.'
+            : undefined
+        dlog(`fetch_media EXIT room=${key} mediaId=${mediaId} → file ${path} (${data.length} bytes)`)
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: true,
+                mediaId,
+                name,
+                mime,
+                size: data.length,
+                mode: 'file',
+                path,
+                ...(note ? { note } : {}),
+              }),
+            },
+          ],
+        }
+      } catch (err: any) {
+        dlog(`fetch_media FAILED room=${key} mediaId=${mediaId}: ${err?.message ?? String(err)}`)
+        return {
+          content: [
+            { type: 'text' as const, text: JSON.stringify({ success: false, error: err?.message ?? String(err) }) },
+          ],
+        }
       }
     },
   )
