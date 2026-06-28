@@ -355,7 +355,17 @@ const connecting = computed(() => {
 
 // ─── Actions ──────────────────────────────────────────────
 function onSend(html: string) {
-  sendMessage(html)
+  sendMessage(html, msgStore.pendingQuote ?? undefined)
+  msgStore.clearQuote()
+}
+
+// Jump to a quoted message: scroll it into view and flash-highlight it.
+function onQuoteJump(messageId: string) {
+  const el = msgListEl.value?.querySelector<HTMLElement>(`[data-mid="${messageId}"]`)
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+  msgStore.flashHighlight(messageId)
 }
 
 // ─── File attach ──────────────────────────────────────────
@@ -667,6 +677,7 @@ function onComingSoon(label: string) {
               @download-file="onDownloadFile"
               @view-file="onViewFile"
               @join-voice="onJoinVoiceFromBubble"
+              @quote-jump="onQuoteJump"
               @open-room-config="onOpenRoomConfig" />
           </div>
 
@@ -691,6 +702,20 @@ function onComingSoon(label: string) {
               "
               autoplay
               playsinline />
+          </div>
+
+          <div v-if="!showForward && msgStore.pendingQuote" class="composer-quote">
+            <v-icon size="14" class="composer-quote-icon">mdi-format-quote-close</v-icon>
+            <span class="composer-quote-name">{{ t('room.quoted', { name: msgStore.pendingQuote.fromNick }) }}</span>
+            <span class="composer-quote-preview">{{ msgStore.pendingQuote.preview }}</span>
+            <v-btn
+              icon="mdi-close"
+              size="x-small"
+              variant="text"
+              density="comfortable"
+              class="composer-quote-cancel"
+              :aria-label="t('room.quote_cancel')"
+              @click="msgStore.clearQuote()" />
           </div>
 
           <RichEditor
@@ -1218,6 +1243,39 @@ function onComingSoon(label: string) {
   flex-direction: column;
   gap: 4px;
   min-height: 0;
+}
+
+.composer-quote {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 16px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 3px solid var(--v-theme-primary, #7c4dff);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  color: #bbb;
+  overflow: hidden;
+}
+.composer-quote-icon {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+.composer-quote-name {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: #ddd;
+}
+.composer-quote-preview {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.8;
+}
+.composer-quote-cancel {
+  flex: 0 0 auto;
 }
 
 /* Mobile sidebar overlay */

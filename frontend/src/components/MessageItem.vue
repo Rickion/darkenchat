@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
-import type { Message, FileMeta, VoiceSessionMeta } from '@/types'
+import type { Message, FileMeta, VoiceSessionMeta, MessageQuote } from '@/types'
 import { useFilesStore } from '@/stores/files'
 import { useVoiceStore } from '@/stores/voice'
 import { useRoomStore } from '@/stores/room'
@@ -30,6 +30,7 @@ const emit = defineEmits<{
   'view-file': [meta: FileMeta]
   'join-voice': [sessionId: string]
   'open-room-config': []
+  'quote-jump': [messageId: string]
 }>()
 
 const expanded = ref(false)
@@ -383,6 +384,39 @@ async function onCopyMessage() {
   }
 }
 
+// ─── Quote (reply-to) ─────────────────────────────────────
+// The quote badge already rendered on THIS message (if it was sent quoting
+// another). Clicking it jumps to the source.
+const quote = computed<MessageQuote | undefined>(() => props.message.quote)
+function onQuoteJump() {
+  if (quote.value) emit('quote-jump', quote.value.messageId)
+}
+
+// A short, single-line preview of THIS message, used when it becomes the
+// quoted source of a future message. Media messages carry their fileId as the
+// implicit media id so an AI can fetch that exact attachment later.
+function buildQuotePreview(): string {
+  if (fileMeta.value) return fileMeta.value.name
+  if (props.message.type === 'voice') return t('voice.system_label')
+  if (props.message.type === 'forward') return t('forward.system_tag')
+  const text = plainTextForCopy().replace(/\s+/g, ' ').trim()
+  return text.length > 80 ? text.slice(0, 80) + '…' : text
+}
+function onQuoteThis() {
+  if (props.selectMode) return
+  const q: MessageQuote = {
+    messageId: props.message.id,
+    fromNick: props.message.from,
+    preview: buildQuotePreview(),
+    ...(fileMeta.value ? { mediaId: fileMeta.value.fileId } : {}),
+  }
+  msgStore.setQuote(q)
+}
+
+// Hover state for the file/media bubble's quote affordance (these bubbles have
+// no side-gutter icon group, so they get their own small hover button).
+const fileHover = ref(false)
+
 // Track natural bubble content height. We measure msg-content directly so
 // chat-msg padding + the (sometimes present) stance-box don't inflate the
 // "is the content single-line?" check. scrollHeight stays correct even when
@@ -426,6 +460,7 @@ watch(
     v-if="message.type === 'voice' && voiceMeta"
     class="chat-row voice-row"
     :class="{ 'select-mode': selectMode }"
+    :data-mid="message.id"
     @click="selectMode && emit('toggle', message.id)">
     <div class="msg-meta">
       <span class="msg-from sys-from">{{ t('voice.system_label') }}</span>
@@ -484,7 +519,7 @@ watch(
   </div>
 
   <!-- System message -->
-  <div v-else-if="message.isSystem" class="sys-msg">
+  <div v-else-if="message.isSystem" class="sys-msg" :data-mid="message.id">
     {{ systemText }}
     <!-- Gear shortcut next to the first AI join announcement → opens the
          room-AI config dialog. -->
@@ -501,7 +536,13 @@ watch(
   </div>
 
   <!-- File / media attachment -->
-  <div v-else-if="message.type === 'file' && fileMeta" class="chat-row" :class="{ mine: isMine }">
+  <div
+    v-else-if="message.type === 'file' && fileMeta"
+    class="chat-row"
+    :class="{ mine: isMine }"
+    :data-mid="message.id"
+    @mouseenter="fileHover = true"
+    @mouseleave="fileHover = false">
     <div v-if="showHeader !== false" class="msg-meta">
       <span class="msg-from">{{ message.from }}</span>
       <v-icon v-if="message.isBot" size="13" color="secondary" class="bot-badge" :title="'AI'">mdi-robot</v-icon>
@@ -512,19 +553,45 @@ watch(
     <div
       v-if="mediaUrl"
       class="chat-msg media-msg"
-      :class="{ mine: isMine, 'catchup-flash': catchup, 'no-header': showHeader === false }">
+      :class="{
+        mine: isMine,
+        'catchup-flash': catchup,
+        'quote-flash': msgStore.highlightedIds.has(message.id),
+        'no-header': showHeader === false,
+      }">
       <img v-if="isImage" :src="mediaUrl" :alt="fileMeta.name" class="media-img" />
       <audio v-else-if="isAudio" :src="mediaUrl" controls class="media-audio" />
       <video v-else-if="isVideo" :src="mediaUrl" controls playsinline class="media-video" />
+      <v-btn
+        v-if="fileHover && !selectMode"
+        icon="mdi-format-quote-close"
+        size="x-small"
+        variant="flat"
+        class="media-quote-btn"
+        :title="t('room.quote')"
+        @click.stop="onQuoteThis" />
     </div>
 
     <!-- File card: downloading / fetch-preview / download states -->
     <div
       v-else
       class="chat-msg file-msg"
-      :class="{ mine: isMine, 'catchup-flash': catchup, 'no-header': showHeader === false }"
+      :class="{
+        mine: isMine,
+        'catchup-flash': catchup,
+        'quote-flash': msgStore.highlightedIds.has(message.id),
+        'no-header': showHeader === false,
+      }"
       @click="onFileCardClick">
       <v-icon class="file-icon" size="22">{{ fileCardIcon }}</v-icon>
+      <v-btn
+        v-if="fileHover && !selectMode"
+        icon="mdi-format-quote-close"
+        size="x-small"
+        variant="flat"
+        class="media-quote-btn"
+        :title="t('room.quote')"
+        @click.stop="onQuoteThis" />
       <div class="file-body">
         <div class="file-name">{{ fileMeta.name }}</div>
         <div class="file-sub">
@@ -540,7 +607,11 @@ watch(
   </div>
 
   <!-- Forward card -->
-  <div v-else-if="message.type === 'forward'" class="forward-card" :class="{ 'catchup-flash': catchup }">
+  <div
+    v-else-if="message.type === 'forward'"
+    class="forward-card"
+    :class="{ 'catchup-flash': catchup }"
+    :data-mid="message.id">
     <div class="forward-header" @click="expanded = !expanded">
       <span class="forward-title">
         <v-icon size="14" class="mr-1">mdi-share</v-icon>
@@ -565,7 +636,12 @@ watch(
   </div>
 
   <!-- Chat message -->
-  <div v-else class="chat-row" :class="{ mine: isMine }" @click="selectMode && emit('toggle', message.id)">
+  <div
+    v-else
+    class="chat-row"
+    :class="{ mine: isMine }"
+    :data-mid="message.id"
+    @click="selectMode && emit('toggle', message.id)">
     <!-- Sender name + time (only when showHeader or different sender) -->
     <div v-if="showHeader !== false" class="msg-meta">
       <span class="msg-from">{{ message.from }}</span>
@@ -588,9 +664,11 @@ watch(
           mine: isMine,
           'select-mode': selectMode,
           'catchup-flash': catchup,
+          'quote-flash': msgStore.highlightedIds.has(message.id),
           'no-header': showHeader === false,
           collapsed: isCollapsed,
           'has-stance': !!message.stance,
+          'has-quote': !!message.quote,
         }">
         <v-checkbox
           v-if="selectMode"
@@ -617,6 +695,12 @@ watch(
               <span v-if="stanceDisagree" class="stance-disagree">▼ {{ stanceDisagree }}</span>
             </div>
           </div>
+        </div>
+        <!-- Quote badge: "[引用了 XXX] preview". Click jumps to the source. -->
+        <div v-if="quote" class="quote-badge" @click.stop="onQuoteJump">
+          <v-icon size="12" class="quote-badge-icon">mdi-format-quote-close</v-icon>
+          <span class="quote-badge-name">{{ t('room.quoted', { name: quote.fromNick }) }}</span>
+          <span class="quote-badge-preview">{{ quote.preview }}</span>
         </div>
         <div class="msg-content" v-html="renderedContent" />
       </div>
@@ -659,6 +743,17 @@ watch(
               @click.stop="onCopyMessage" />
           </template>
         </v-tooltip>
+        <v-tooltip :text="t('room.quote')" location="top" open-delay="1000">
+          <template #activator="{ props: tp }">
+            <v-btn
+              icon="mdi-format-quote-close"
+              size="x-small"
+              variant="text"
+              density="comfortable"
+              v-bind="tp"
+              @click.stop="onQuoteThis" />
+          </template>
+        </v-tooltip>
       </div>
       <!-- Mobile + long bubble: two groups (top + bottom of the side). A long
            bubble is by definition multi-line, so the collapse icon shows
@@ -689,6 +784,17 @@ watch(
                 @click.stop="onCopyMessage" />
             </template>
           </v-tooltip>
+          <v-tooltip :text="t('room.quote')" location="top" open-delay="1000">
+            <template #activator="{ props: tp }">
+              <v-btn
+                icon="mdi-format-quote-close"
+                size="x-small"
+                variant="text"
+                density="comfortable"
+                v-bind="tp"
+                @click.stop="onQuoteThis" />
+            </template>
+          </v-tooltip>
         </div>
         <div
           class="bubble-icons bubble-icons-side bubble-icons-anchor-bottom"
@@ -713,6 +819,17 @@ watch(
                 density="comfortable"
                 v-bind="tp"
                 @click.stop="onCopyMessage" />
+            </template>
+          </v-tooltip>
+          <v-tooltip :text="t('room.quote')" location="top" open-delay="1000">
+            <template #activator="{ props: tp }">
+              <v-btn
+                icon="mdi-format-quote-close"
+                size="x-small"
+                variant="text"
+                density="comfortable"
+                v-bind="tp"
+                @click.stop="onQuoteThis" />
             </template>
           </v-tooltip>
         </div>
@@ -748,6 +865,17 @@ watch(
               density="comfortable"
               v-bind="tp"
               @click.stop="onCopyMessage" />
+          </template>
+        </v-tooltip>
+        <v-tooltip :text="t('room.quote')" location="top" open-delay="1000">
+          <template #activator="{ props: tp }">
+            <v-btn
+              icon="mdi-format-quote-close"
+              size="x-small"
+              variant="text"
+              density="comfortable"
+              v-bind="tp"
+              @click.stop="onQuoteThis" />
           </template>
         </v-tooltip>
       </div>
@@ -1022,6 +1150,86 @@ watch(
   animation: catchup-flash 3s ease-out 1;
 }
 
+/* ── Quote jump highlight ── */
+@keyframes quote-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(124, 179, 255, 0);
+  }
+  15% {
+    box-shadow: 0 0 0 3px rgba(124, 179, 255, 0.65);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(124, 179, 255, 0);
+  }
+}
+.quote-flash {
+  animation: quote-flash 3s ease-out 1;
+}
+
+/* ── Quote badge (reply-to preview on a sent message) ── */
+.has-quote {
+  flex-direction: column;
+  align-items: stretch;
+}
+.has-quote .select-cb {
+  align-self: flex-start;
+}
+.quote-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 5px;
+  padding: 3px 8px;
+  border-left: 3px solid var(--dc-blue);
+  background: rgba(124, 179, 255, 0.12);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.76rem;
+  max-width: 100%;
+  overflow: hidden;
+}
+.quote-badge:hover {
+  background: rgba(124, 179, 255, 0.22);
+}
+.chat-msg.mine .quote-badge {
+  background: rgba(0, 0, 0, 0.12);
+  border-left-color: #1a1a1a;
+}
+.quote-badge-icon {
+  flex-shrink: 0;
+  color: var(--dc-blue);
+}
+.chat-msg.mine .quote-badge-icon {
+  color: #1a1a1a;
+}
+.quote-badge-name {
+  font-weight: 600;
+  color: var(--dc-blue);
+  flex-shrink: 0;
+}
+.chat-msg.mine .quote-badge-name {
+  color: #1a1a1a;
+}
+.quote-badge-preview {
+  color: var(--dc-gray);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-msg.mine .quote-badge-preview {
+  color: #333;
+}
+
+/* Hover quote button on media/file bubbles (no side-gutter group there) */
+.media-quote-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  background: rgba(20, 20, 20, 0.7) !important;
+  color: #fff !important;
+}
+
 /* ── Forward card ── */
 .forward-card {
   background: var(--dc-panel);
@@ -1104,6 +1312,7 @@ watch(
 
 /* File card */
 .file-msg {
+  position: relative;
   cursor: pointer;
   min-width: 200px;
   max-width: 320px;
@@ -1166,6 +1375,7 @@ watch(
 
 /* Inline media attachment (image / audio / video) */
 .chat-msg.media-msg {
+  position: relative;
   flex-direction: column;
   align-items: stretch;
   padding: 4px;

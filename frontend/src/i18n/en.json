@@ -47,7 +47,10 @@
     "expand": "Expand",
     "copy": "Copy message",
     "collapse_all": "Collapse all messages",
-    "expand_all": "Expand all messages"
+    "expand_all": "Expand all messages",
+    "quote": "Quote this message",
+    "quoted": "Quoted {name}",
+    "quote_cancel": "Cancel quote"
   },
   "system": {
     "join": "{name} joined ({connType})",

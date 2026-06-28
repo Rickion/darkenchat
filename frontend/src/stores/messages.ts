@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, reactive } from 'vue'
-import type { Message } from '@/types'
+import type { Message, MessageQuote } from '@/types'
 
 const SESSION_KEY_PREFIX = 'dc_messages_'
 
@@ -32,6 +32,10 @@ export const useMessagesStore = defineStore('messages', () => {
   const failedIds = reactive(new Set<string>())
   const catchupIds = reactive(new Set<string>())
   const collapsedIds = reactive(new Set<string>())
+  // Messages briefly flashed when the user jumps to them via a quote badge.
+  const highlightedIds = reactive(new Set<string>())
+  // The message the composer will quote on the next send (null = none).
+  const pendingQuote = ref<MessageQuote | null>(null)
 
   function load(roomKey: string) {
     currentRoomKey.value = roomKey
@@ -77,6 +81,29 @@ export const useMessagesStore = defineStore('messages', () => {
     if (collapsedIds.has(id)) collapsedIds.delete(id)
     else collapsedIds.add(id)
   }
+
+  // Flash-highlight a message for 3s (used by the quote-badge jump). Re-arming
+  // the same id restarts the window rather than stacking timers.
+  const highlightTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  function flashHighlight(id: string) {
+    const existing = highlightTimers.get(id)
+    if (existing) clearTimeout(existing)
+    highlightedIds.add(id)
+    highlightTimers.set(
+      id,
+      setTimeout(() => {
+        highlightedIds.delete(id)
+        highlightTimers.delete(id)
+      }, 3000),
+    )
+  }
+
+  function setQuote(q: MessageQuote) {
+    pendingQuote.value = q
+  }
+  function clearQuote() {
+    pendingQuote.value = null
+  }
   function collapseAll(ids: string[]) {
     for (const id of ids) collapsedIds.add(id)
   }
@@ -89,6 +116,8 @@ export const useMessagesStore = defineStore('messages', () => {
     failedIds.clear()
     catchupIds.clear()
     collapsedIds.clear()
+    highlightedIds.clear()
+    pendingQuote.value = null
     const k = roomKey ?? currentRoomKey.value
     if (k) sessionStorage.removeItem(SESSION_KEY_PREFIX + k)
     currentRoomKey.value = ''
@@ -100,6 +129,8 @@ export const useMessagesStore = defineStore('messages', () => {
     failedIds,
     catchupIds,
     collapsedIds,
+    highlightedIds,
+    pendingQuote,
     load,
     add,
     update,
@@ -109,6 +140,9 @@ export const useMessagesStore = defineStore('messages', () => {
     toggleCollapsed,
     collapseAll,
     expandAll,
+    flashHighlight,
+    setQuote,
+    clearQuote,
     clear,
   }
 })

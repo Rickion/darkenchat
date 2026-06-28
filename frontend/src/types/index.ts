@@ -56,6 +56,18 @@ export interface MessageStance {
   disagreeWith?: string[]
 }
 
+// A reply-to reference attached to an outgoing message. `messageId` points at
+// the quoted message; `mediaId` is the quoted message's fileId when it was a
+// media/file message (so an AI can fetch_media that exact attachment by id).
+// `fromNick` + `preview` are denormalised so the quote badge can render without
+// the source message still being in the local store.
+export interface MessageQuote {
+  messageId: string
+  mediaId?: string
+  fromNick: string
+  preview: string
+}
+
 export interface Message {
   id: string
   type: MessageType
@@ -69,6 +81,7 @@ export interface Message {
   isBot?: boolean
   meta?: Record<string, unknown>
   stance?: MessageStance
+  quote?: MessageQuote
 }
 
 export interface SwitchLog {

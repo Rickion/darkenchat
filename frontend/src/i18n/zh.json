@@ -47,7 +47,10 @@
     "expand": "展开",
     "copy": "复制消息",
     "collapse_all": "全部折叠",
-    "expand_all": "全部展开"
+    "expand_all": "全部展开",
+    "quote": "引用这条消息",
+    "quoted": "引用了 {name}",
+    "quote_cancel": "取消引用"
   },
   "system": {
     "join": "{name} 已加入（{connType}）",

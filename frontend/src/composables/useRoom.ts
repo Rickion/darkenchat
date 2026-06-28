@@ -7,7 +7,7 @@ import { useConnectionStore } from '@/stores/connection'
 import { useTurnStore } from '@/stores/turn'
 import { useFilesStore } from '@/stores/files'
 import { useVoiceStore } from '@/stores/voice'
-import type { Message, S2C, RTCSignal, FileMeta, VoiceSessionMeta } from '@/types'
+import type { Message, S2C, RTCSignal, FileMeta, VoiceSessionMeta, MessageQuote } from '@/types'
 import { PROTOCOL_VERSION } from '@/types'
 import { nanoid } from 'nanoid'
 import { calcDeviceScore } from '@/utils/score'
@@ -1194,7 +1194,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
   // ──────────────────────────────────────────────
   // Public: send chat message
   // ──────────────────────────────────────────────
-  function sendMessage(content: string) {
+  function sendMessage(content: string, quote?: MessageQuote) {
     dispatch({
       id: nanoid(),
       type: 'chat',
@@ -1203,6 +1203,7 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
       content,
       timestamp: Date.now(),
       roomKey: roomStore.key,
+      ...(quote ? { quote } : {}),
     })
   }
 
