@@ -58,7 +58,7 @@ export type C2S =
 export type S2C =
   | { type: 'joined';      clientId: string; nickname: string; centerId: string; chairId: string; members: MemberInfo[]; nicknameSet: string; isReturning?: boolean; aiTurnLimit?: number }
   | { type: 'member_join'; member: MemberInfo }
-  | { type: 'member_left'; clientId: string; nickname: string }
+  | { type: 'member_left'; clientId: string; nickname: string; reason?: 'kicked' }
   | { type: 'member_conn'; clientId: string; connType: 'p2p' | 'turn' | 'relay' }
   | { type: 'new_center';  centerId: string }
   | { type: 'new_chair';   chairId: string; nickname: string }

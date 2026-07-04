@@ -359,7 +359,9 @@ export function useRoom(onEvent: (e: RoomEvent) => void) {
         rtc.closePeer(msg.clientId)
         relayPeers.delete(msg.clientId)
         voice.onMemberLeftRoom(msg.clientId)
-        addSystemMessage('system.leave', { name: msg.nickname })
+        addSystemMessage(msg.reason === 'kicked' ? 'system.kicked' : 'system.leave', {
+          name: msg.nickname,
+        })
         if (wasCenter) {
           // The center is confirmed gone (relay to it is now impossible), so
           // any message I sent after we last heard from it never got

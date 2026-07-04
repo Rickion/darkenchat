@@ -473,6 +473,7 @@ app.register(async fastify => {
               type: 'member_left',
               clientId: msg.targetId,
               nickname: target.nickname,
+              reason: 'kicked',
             })
             announceChairChange(room, prevChairId)
             dissolveIfBotsOnly(room)

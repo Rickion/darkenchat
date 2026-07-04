@@ -55,6 +55,7 @@
   "system": {
     "join": "{name} 已加入（{connType}）",
     "leave": "{name} 离开了房间",
+    "kicked": "{name} 被踢出房间",
     "kick": "{kicker} 将 {kicked} 移出房间",
     "reconnecting": "正在重新连接……",
     "reconnected": "已重新连接",

@@ -55,6 +55,7 @@
   "system": {
     "join": "{name} joined ({connType})",
     "leave": "{name} left the room",
+    "kicked": "{name} was removed from the room",
     "kick": "{kicker} removed {kicked} from the room",
     "reconnecting": "Reconnecting...",
     "reconnected": "Reconnected",
