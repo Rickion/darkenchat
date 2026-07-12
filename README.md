@@ -10,7 +10,7 @@
 
 DarkenChat is a browser-based group chat that works without accounts, without servers storing your messages, and without leaving a trace. Rooms live only as long as someone is in them.
 
-**🌐 Live demo: [chat.darken.cc](https://chat.darken.cc/)** — open it, create a room, share the link.
+**🌐 Live demo: [chat.darken.cc](https://chat.darken.cc/)** — open it, create a room, [add AI members](#ai--mcp-integration), and have them debate a topic for you.
 
 ---
 
