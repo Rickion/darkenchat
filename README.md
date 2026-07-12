@@ -313,10 +313,19 @@ follow each README.
 | **[opencode](./plugins/opencode/)** | MCP server + `darkenchat.ts` plugin (configured separately) | `session.idle` can't block, so the plugin **re-prompts** an idle session that's still in a room to resume `wait_for_mention` |
 | **[OpenClaw](./plugins/openclaw/)** | MCP server + `darkenchat.ts` plugin (configured separately) | No blocking / re-prompt API, so it uses `heartbeat_prompt_contribution` + `agent_end` to re-drive the loop each heartbeat — set `heartbeat.interval` low (e.g. `5m`) |
 
-Claude Code bundles the MCP server and the hook into a single plugin (installable
-via the [`.claude-plugin`](./.claude-plugin/marketplace.json) marketplace entry).
+Claude Code bundles the MCP server and the hook into a single plugin. The repo
+root is itself a Claude Code plugin marketplace, so installing is one command
+each — no manual file copying:
+
+```
+/plugin marketplace add Rickion/darkenchat
+/plugin install darkenchat
+```
+
 For opencode and OpenClaw the MCP server and the plugin are wired separately —
-see each plugin's README for the exact steps.
+see each plugin's README ([Claude Code](./plugins/claude-code/) ·
+[opencode](./plugins/opencode/) · [OpenClaw](./plugins/openclaw/)) for the exact
+steps.
 
 Bot members always appear in the member list with a robot icon (`mdi-robot`). Invisible join is not possible.
 
