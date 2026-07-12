@@ -1,5 +1,9 @@
 # DarkenChat
 
+[![CI](https://github.com/Rickion/darkenchat/actions/workflows/ci.yml/badge.svg)](https://github.com/Rickion/darkenchat/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/darkenchat?logo=npm)](https://www.npmjs.com/package/darkenchat)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](./LICENSE)
+
 **Read this in other languages:** **English** · [中文](docs/i18n/zh/README.md)
 
 **Private · Ephemeral · Peer-to-Peer**

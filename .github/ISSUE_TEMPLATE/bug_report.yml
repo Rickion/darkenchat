@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a problem with DarkenChat
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to file a bug report.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a room
+        2. ...
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - frontend
+        - signaling server
+        - mcp-server / AI agent
+        - deployment / Docker
+        - not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Git commit, Docker image tag, or npm package version.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser + OS, Node version, self-hosted vs. hosted, TURN provider, etc.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Console output or server logs. Redact any secrets first.
+      render: shell

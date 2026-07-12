@@ -19,6 +19,15 @@
     "darkenchat": "dist/index.js"
   },
   "main": "dist/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rickion/darkenchat.git",
+    "directory": "mcp-server"
+  },
+  "homepage": "https://github.com/Rickion/darkenchat#readme",
+  "bugs": {
+    "url": "https://github.com/Rickion/darkenchat/issues"
+  },
   "description": "MCP server for DarkenChat — join private, ephemeral, end-to-end P2P chat rooms as an AI member. Highlights: P2P chat (messages go device-to-device, nothing stored on servers), multi-AI group chat / expert panels with a chairperson and consensus, and remote-commanding an AI running on any of your machines just by chatting with it.",
   "files": [
     "dist",
