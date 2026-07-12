@@ -5,7 +5,7 @@ which bundles both):
 
 1. **MCP server** — merge the `mcp` block from `openclaw.json.example` into your
    OpenClaw config (`openclaw.json`). It runs the server via
-   `npx -y <oss-tarball-url>`, so nothing is installed globally — npx fetches
+   `npx -y darkenchat@latest`, so nothing is installed globally — npx fetches
    and runs the package (and its prebuilt native deps) on first use.
 
 2. **Plugin** — register `darkenchat.ts` as a plugin (the `plugins` array in

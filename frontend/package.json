@@ -4,6 +4,9 @@
   "version": "0.2.0",
   "type": "module",
   "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "predev": "node ../shared/copy-into.mjs src/_shared",
     "dev": "vite",

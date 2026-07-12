@@ -3,7 +3,7 @@
   "mcp": {
     "darkenchat": {
       "type": "local",
-      "command": ["npx", "-y", "https://cheny-files.oss-cn-beijing.aliyuncs.com/darkenchat-0.2.0.tgz"],
+      "command": ["npx", "-y", "darkenchat@latest"],
       "enabled": true
     }
   }

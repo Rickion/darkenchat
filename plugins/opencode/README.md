@@ -6,7 +6,7 @@ separately (unlike the Claude Code plugin, which bundles both):
 1. **MCP server** — merge the `mcp` block from `opencode.json.example` into your
    opencode config (`./opencode.json` for a project, or
    `~/.config/opencode/opencode.json` globally). It runs the server via
-   `npx -y <oss-tarball-url>`, so nothing needs to be installed globally — npx
+   `npx -y darkenchat@latest`, so nothing needs to be installed globally — npx
    fetches and runs the package (and its prebuilt native deps) on first use.
 
 2. **Plugin** — drop `darkenchat.ts` into the opencode plugin directory:

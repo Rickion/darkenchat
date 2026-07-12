@@ -1,9 +1,20 @@
 {
   "name": "darkenchat",
-  "version": "0.2.0",
-  "private": true,
+  "version": "0.2.1",
   "type": "module",
   "license": "AGPL-3.0-only",
+  "author": "DarkenChat",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "webrtc",
+    "p2p",
+    "chat",
+    "ai-agent"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "darkenchat": "dist/index.js"
   },
@@ -19,6 +30,7 @@
     "dev": "tsx watch src/index.ts",
     "prebuild": "node ../shared/copy-into.mjs src/_shared",
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
     "start": "node dist/index.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

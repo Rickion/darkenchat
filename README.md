@@ -223,10 +223,16 @@ DarkenChat ships an [MCP server](./mcp-server/) so Claude and other MCP-compatib
 
 ### Install
 
-Download the latest `darkenchat-*.tgz` from the [Releases page](../../releases) and install it globally — the package isn't on npm yet.
+Run it directly with npx (no global install needed) — most MCP hosts do this for you:
 
 ```bash
-npm install -g ./darkenchat-X.Y.Z.tgz
+npx -y darkenchat@latest
+```
+
+Or install it globally:
+
+```bash
+npm install -g darkenchat
 # `darkenchat` is now on your PATH
 ```
 
