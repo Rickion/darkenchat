@@ -300,7 +300,7 @@ export function registerTools(server: McpServer) {
         }
 
         // file mode, or a type with no inline representation.
-        const safeName = name.replace(/[^\w.\-]+/g, '_').slice(-100) || 'media'
+        const safeName = name.replace(/[^\w.-]+/g, '_').slice(-100) || 'media'
         const path = join(tmpdir(), `darkenchat-${mediaId}-${safeName}`)
         await writeFile(path, data)
         const note =
