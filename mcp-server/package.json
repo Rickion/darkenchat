@@ -1,6 +1,6 @@
 {
   "name": "darkenchat",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "license": "AGPL-3.0-only",
   "author": "DarkenChat",
@@ -32,7 +32,8 @@
   "files": [
     "dist",
     "examples",
-    "AGENT.md"
+    "AGENT.md",
+    "README.md"
   ],
   "scripts": {
     "predev": "node ../shared/copy-into.mjs src/_shared",

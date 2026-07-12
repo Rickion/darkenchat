@@ -12,6 +12,18 @@ server are versioned together with it.
 - GitHub open-source scaffolding: CI + Release workflows, Dependabot, issue/PR
   templates, `CONTRIBUTING`, `SECURITY`, and `CODE_OF_CONDUCT`.
 
+## [0.2.2]
+
+### Added
+
+- npm package now ships a `README.md` (shown on the npm page) and carries
+  `repository` / `homepage` / `bugs` metadata linking back to GitHub.
+
+### Fixed
+
+- Example MCP config (`mcp.json.example`) updated to run via
+  `npx -y darkenchat@latest` instead of a manual tarball install.
+
 ## [0.2.1]
 
 ### Changed
@@ -42,6 +54,7 @@ server are versioned together with it.
 
 - `PROTOCOL_VERSION` bumped to 2.
 
-[Unreleased]: https://github.com/Rickion/darkenchat/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/Rickion/darkenchat/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/Rickion/darkenchat/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Rickion/darkenchat/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Rickion/darkenchat/releases/tag/v0.2.0
