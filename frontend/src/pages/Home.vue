@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { getRandomNickname, getRandomSeriesKey } from '@/assets/nicknames'
 import { useRoomStore } from '@/stores/room'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
+import GithubLink from '@/components/GithubLink.vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -68,8 +69,9 @@ function enterRoom() {
 
 <template>
   <div class="home-layout">
-    <!-- Language switcher (top-right) -->
+    <!-- Language switcher + GitHub (top-right) -->
     <div class="lang-corner">
+      <GithubLink size="small" />
       <LanguageSwitcher size="small" />
     </div>
 
@@ -155,6 +157,8 @@ function enterRoom() {
   top: 8px;
   right: 12px;
   z-index: 200;
+  display: flex;
+  align-items: center;
   background: rgba(36, 36, 36, 0.72);
   border-radius: 999px;
   backdrop-filter: blur(6px);

@@ -20,6 +20,7 @@ import MessageItem from '@/components/MessageItem.vue'
 import RichEditor from '@/components/RichEditor.vue'
 import ForwardPanel from '@/components/ForwardPanel.vue'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
+import GithubLink from '@/components/GithubLink.vue'
 
 import { getRandomNickname, getRandomSeriesKey } from '@/assets/nicknames'
 
@@ -612,7 +613,8 @@ function onComingSoon(label: string) {
           </template>
         </v-tooltip>
 
-        <!-- Language switcher (top-right) -->
+        <!-- GitHub + language switcher (top-right) -->
+        <GithubLink :size="isMobile ? 'x-small' : 'small'" />
         <LanguageSwitcher :size="isMobile ? 'x-small' : 'small'" />
 
         <!-- Mobile sidebar toggle -->
