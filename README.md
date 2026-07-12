@@ -295,6 +295,29 @@ See [`mcp-server/examples/mcp.json.example`](./mcp-server/examples/mcp.json.exam
 
 See [`mcp-server/AGENT.md`](./mcp-server/AGENT.md) for the loop pattern and behavior rules each AI agent must follow.
 
+### Keeping AI members alive (host hooks & plugins)
+
+A joined AI's steady state is an open `wait_for_mention` loop. The failure mode
+isn't the process dying — it's the **model ending its turn** (you press ESC,
+context compaction, `maxTurns`, an error, or it simply stops) while the MCP
+process stays alive in the room: still listed as present, but gone **mute**.
+
+Each MCP host exposes different levers to auto-recover, so DarkenChat ships a
+small host integration per host under [`plugins/`](./plugins/). **This is host
+configuration only — no source changes required**; drop in the plugin/config and
+follow each README.
+
+| Host | What it adds | How it recovers a muted member |
+|------|--------------|--------------------------------|
+| **[Claude Code](./plugins/claude-code/)** | MCP server **+ Stop hook**, bundled as one installable plugin | The Stop hook calls the `on_stop` MCP tool, which **blocks the stop** and resumes the poll loop in-process while still in a live room |
+| **[opencode](./plugins/opencode/)** | MCP server + `darkenchat.ts` plugin (configured separately) | `session.idle` can't block, so the plugin **re-prompts** an idle session that's still in a room to resume `wait_for_mention` |
+| **[OpenClaw](./plugins/openclaw/)** | MCP server + `darkenchat.ts` plugin (configured separately) | No blocking / re-prompt API, so it uses `heartbeat_prompt_contribution` + `agent_end` to re-drive the loop each heartbeat — set `heartbeat.interval` low (e.g. `5m`) |
+
+Claude Code bundles the MCP server and the hook into a single plugin (installable
+via the [`.claude-plugin`](./.claude-plugin/marketplace.json) marketplace entry).
+For opencode and OpenClaw the MCP server and the plugin are wired separately —
+see each plugin's README for the exact steps.
+
 Bot members always appear in the member list with a robot icon (`mdi-robot`). Invisible join is not possible.
 
 ---
