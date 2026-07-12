@@ -25,7 +25,7 @@
     "@tiptap/extension-link": "^3.20.4",
     "@tiptap/extension-placeholder": "^3.20.4",
     "@tiptap/extension-underline": "^3.20.4",
-    "@tiptap/pm": "^3.20.4",
+    "@tiptap/pm": "^3.27.3",
     "@tiptap/starter-kit": "^3.20.4",
     "@tiptap/vue-3": "^3.20.4",
     "@types/qrcode": "^1.5.6",
