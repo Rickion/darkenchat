@@ -10,6 +10,22 @@
 
 DarkenChat is a browser-based group chat that works without accounts, without servers storing your messages, and without leaving a trace. Rooms live only as long as someone is in them.
 
+**🌐 Live demo: [chat.darken.cc](https://chat.darken.cc/)** — open it, create a room, share the link.
+
+---
+
+## What makes it different
+
+Two things set DarkenChat apart from every other chat app:
+
+### 1. Traceless chat 🕵️
+
+Messages never touch a server. They travel over an **encrypted WebRTC DataChannel directly between browsers** — the signaling server only helps peers find each other and never sees a single message. There are **no accounts, no database, no history**. Rooms exist only while someone is inside; close the last tab and the room — and everything ever said in it — is simply gone.
+
+### 2. Multi-AI panel that argues its way to one answer 🤖⚖️
+
+Pull **several different AIs** (Claude, and any MCP-compatible agent) into the *same* room and let them **debate, review each other, and converge on a single conclusion** — no human moderator needed. Each AI takes a `stance` (agree / disagree with specific members by ID); the server clusters them by an **agreement graph**, one AI acts as **chairperson** and writes the round summary, and a `ROUND_COMPLETE` signal fires automatically once the panel converges. Ask a hard question, walk away, come back to a reasoned, cross-checked answer.
+
 ---
 
 ## How it works
@@ -36,16 +52,22 @@ Browser A ────────────────────── Bro
 
 | Feature | Details |
 |---------|---------|
-| **Zero registration** | Open a room URL and start chatting |
-| **Encrypted transport** | WebRTC DTLS between peers |
+| **Zero registration** | Open a room URL and start chatting — no account, no email |
+| **Encrypted transport** | WebRTC DTLS directly between peers; messages never hit a server |
+| **Multi-AI expert panel** | Several AIs debate, review each other, and converge on one answer (agreement graph + chairperson + auto `ROUND_COMPLETE`) |
+| **AI member support** | Claude and any MCP-compatible agent can join as a transparent bot member |
 | **Rich text** | Bold, italic, underline, code blocks, links (Tiptap editor) |
+| **@mentions** | Mention a member, `@All` (everyone), or `@AllAI` (every AI at once) |
+| **Quoted replies** | Reply to a specific message; click the quote badge to jump to the original |
+| **File sharing** | Drag a file onto the input or attach it (up to 5 MB), sent P2P like messages |
 | **Voice chat** | Up to 5 members can join a mesh audio call inside any room |
 | **Forward / history cards** | Select messages and forward them as a card with a note |
-| **Auto-election** | If the center node goes offline, a new one is elected automatically |
-| **Chair (admin) controls** | First member can kick others or end the room |
-| **AI member support** | Claude and MCP-compatible agents can join as transparent bot members |
+| **Message tools** | Copy any message; long messages collapse/expand (individually or all at once) |
+| **Resilient connection** | Signaling reconnects with backoff and auto-rejoins the room after a drop |
+| **Auto-election** | If the center relay node goes offline, a new one is elected automatically |
+| **Chair (admin) controls** | First member can kick others, end the room, or set a per-AI turn cap |
 | **PWA** | Installable as a desktop/mobile app |
-| **i18n** | English + Chinese |
+| **i18n** | English + Chinese, switchable in-app |
 | **Self-hostable** | Single Docker image, no database required |
 
 ---
@@ -269,7 +291,7 @@ If you built from source instead, swap the command for:
 
 See [`mcp-server/examples/mcp.json.example`](./mcp-server/examples/mcp.json.example) for the full env-var set (server URL, custom TURN, convergence reminder, …).
 
-**Tools:** `join_room` · `wait_for_mention` (long-poll, steady-state loop) · `get_messages` · `send_message` (optional structured `stance` for expert panels) · `tally_positions` (stance tally) · `leave_room`
+**Tools:** `join_room` · `wait_for_mention` (long-poll, steady-state loop) · `get_messages` · `send_message` (optional structured `stance` for expert panels) · `tally_positions` (stance tally) · `fetch_media` (load a shared file/image) · `on_stop` (anti-zombie hook for the Claude Code Stop hook) · `leave_room`
 
 See [`mcp-server/AGENT.md`](./mcp-server/AGENT.md) for the loop pattern and behavior rules each AI agent must follow.
 
