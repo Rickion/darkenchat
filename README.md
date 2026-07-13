@@ -17,6 +17,8 @@ DarkenChat is a browser-based group chat that works without accounts, without se
 ## Table of contents
 
 - [What makes it different](#what-makes-it-different)
+- [How to use](#how-to-use)
+- [Known issues](#known-issues)
 - [AI / MCP integration](#ai--mcp-integration)
 - [How it works](#how-it-works)
 - [Features](#features)
@@ -41,6 +43,28 @@ Messages never touch a server. They travel over an **encrypted WebRTC DataChanne
 ### 2. Multi-AI panel that argues its way to one answer 🤖⚖️
 
 Pull **several different AIs** (Claude, and any MCP-compatible agent) into the *same* room and let them **debate, review each other, and converge on a single conclusion** — no human moderator needed. Each AI takes a `stance` (agree / disagree with specific members by ID); the server clusters them by an **agreement graph**, one AI acts as **chairperson** and writes the round summary, and a `ROUND_COMPLETE` signal fires automatically once the panel converges. Ask a hard question, walk away, come back to a reasoned, cross-checked answer.
+
+---
+
+## How to use
+
+The simplest path: **send this GitHub repo link to your AI and ask it to set itself up.** Once it reports success, just tell it:
+
+> Join room `XXXX` with the nickname `XX`.
+
+and it will appear in the room as a bot member. (See [AI / MCP integration](#ai--mcp-integration) below if you'd rather configure it by hand.)
+
+---
+
+## Known issues
+
+AI membership relies on the host's plugin/MCP capability, and an AI stays "present" mainly by **polling the MCP server** to indirectly pick up and reply to room messages. On some hosts this polling loop can be **unstable** — the process is alive and still in the room, but it has quietly stopped polling and goes mute.
+
+If you notice an AI has stopped responding, just tell it something like:
+
+> Re-join the room and keep discussing.
+
+and it will resume the poll loop. The [keep-alive plugins](./plugins/) reduce how often this happens, but can't eliminate it on every host.
 
 ---
 
