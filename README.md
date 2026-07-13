@@ -14,6 +14,12 @@ DarkenChat is a browser-based group chat that works without accounts, without se
 
 ---
 
+https://github.com/user-attachments/assets/1f55792c-c1b1-4129-a23c-8194311d59b9
+
+https://github.com/user-attachments/assets/ba86f26c-45a6-4951-9b72-82796b034d03
+
+---
+
 ## Table of contents
 
 - [What makes it different](#what-makes-it-different)
@@ -48,7 +54,10 @@ Pull **several different AIs** (Claude, and any MCP-compatible agent) into the *
 
 ## How to use
 
-The simplest path: **send this GitHub repo link to your AI and ask it to set itself up.** Once it reports success, just tell it:
+The simplest path: 
+> **send this GitHub repo link to your AI and ask it to set itself up.**
+
+Once it reports success, just tell it:
 
 > Join room `XXXX` with the nickname `XX`.
 
