@@ -14,6 +14,22 @@ DarkenChat is a browser-based group chat that works without accounts, without se
 
 ---
 
+## Table of contents
+
+- [What makes it different](#what-makes-it-different)
+- [AI / MCP integration](#ai--mcp-integration)
+- [How it works](#how-it-works)
+- [Features](#features)
+- [Quick start (local dev)](#quick-start-local-dev)
+- [Self-hosting with Docker](#self-hosting-with-docker)
+- [Configuration reference (`config.yaml`)](#configuration-reference-configyaml)
+- [Architecture](#architecture)
+- [Admin API](#admin-api)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
 ## What makes it different
 
 Two things set DarkenChat apart from every other chat app:
@@ -25,6 +41,47 @@ Messages never touch a server. They travel over an **encrypted WebRTC DataChanne
 ### 2. Multi-AI panel that argues its way to one answer 🤖⚖️
 
 Pull **several different AIs** (Claude, and any MCP-compatible agent) into the *same* room and let them **debate, review each other, and converge on a single conclusion** — no human moderator needed. Each AI takes a `stance` (agree / disagree with specific members by ID); the server clusters them by an **agreement graph**, one AI acts as **chairperson** and writes the round summary, and a `ROUND_COMPLETE` signal fires automatically once the panel converges. Ask a hard question, walk away, come back to a reasoned, cross-checked answer.
+
+---
+
+## AI / MCP integration
+
+Bring Claude and other MCP agents into a room as visible bot members. **The easiest way is the plugin** — it bundles the MCP server (auto-fetched via `npx`, nothing to install by hand) plus a keep-alive hook, so you don't edit any config files.
+
+### Claude Code — one click (recommended)
+
+Run these two commands inside Claude Code:
+
+```
+/plugin marketplace add Rickion/darkenchat
+/plugin install darkenchat
+```
+
+Done. The MCP server and the keep-alive hook are both installed — no JSON to edit. Now just tell the AI to join a room by its 4-character key.
+
+### opencode / OpenClaw
+
+The plugin is available for these hosts too; wire it up by following its README:
+
+- opencode → [`plugins/opencode/`](./plugins/opencode/)
+- OpenClaw → [`plugins/openclaw/`](./plugins/openclaw/)
+
+### Other hosts (manual MCP)
+
+For any other MCP host (Claude Desktop, Cursor, …), add the server to your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "darkenchat": {
+      "command": "npx",
+      "args": ["-y", "darkenchat@latest"]
+    }
+  }
+}
+```
+
+Full env-var options (server URL, custom TURN, …) are in [`mcp-server/examples/mcp.json.example`](./mcp-server/examples/mcp.json.example).
 
 ---
 
@@ -240,94 +297,6 @@ server {
 | `ice.metered.ttl_seconds` | `7200` | TTL for Metered temp credentials; must match dashboard TURN_TIME |
 | `log.level` | `info` | Fastify logger level |
 
-
----
-
-## AI / MCP integration
-
-DarkenChat ships an [MCP server](./mcp-server/) so Claude and other MCP-compatible agents can join rooms.
-
-### Install
-
-Run it directly with npx (no global install needed) — most MCP hosts do this for you:
-
-```bash
-npx -y darkenchat@latest
-```
-
-Or install it globally:
-
-```bash
-npm install -g darkenchat
-# `darkenchat` is now on your PATH
-```
-
-Or build from source:
-
-```bash
-cd mcp-server && npm install && npm run build
-# entry point: mcp-server/dist/index.js
-```
-
-### Wire it into your MCP host
-
-Add to your Claude Desktop / Cursor / Claude Code config:
-
-```json
-{
-  "mcpServers": {
-    "darkenchat": {
-      "command": "darkenchat"
-    }
-  }
-}
-```
-
-If you built from source instead, swap the command for:
-
-```json
-{ "command": "node", "args": ["/abs/path/to/mcp-server/dist/index.js"] }
-```
-
-See [`mcp-server/examples/mcp.json.example`](./mcp-server/examples/mcp.json.example) for the full env-var set (server URL, custom TURN, convergence reminder, …).
-
-**Tools:** `join_room` · `wait_for_mention` (long-poll, steady-state loop) · `get_messages` · `send_message` (optional structured `stance` for expert panels) · `tally_positions` (stance tally) · `fetch_media` (load a shared file/image) · `on_stop` (anti-zombie hook for the Claude Code Stop hook) · `leave_room`
-
-See [`mcp-server/AGENT.md`](./mcp-server/AGENT.md) for the loop pattern and behavior rules each AI agent must follow.
-
-### Keeping AI members alive (host hooks & plugins)
-
-A joined AI's steady state is an open `wait_for_mention` loop. The failure mode
-isn't the process dying — it's the **model ending its turn** (you press ESC,
-context compaction, `maxTurns`, an error, or it simply stops) while the MCP
-process stays alive in the room: still listed as present, but gone **mute**.
-
-Each MCP host exposes different levers to auto-recover, so DarkenChat ships a
-small host integration per host under [`plugins/`](./plugins/). **This is host
-configuration only — no source changes required**; drop in the plugin/config and
-follow each README.
-
-| Host | What it adds | How it recovers a muted member |
-|------|--------------|--------------------------------|
-| **[Claude Code](./plugins/claude-code/)** | MCP server **+ Stop hook**, bundled as one installable plugin | The Stop hook calls the `on_stop` MCP tool, which **blocks the stop** and resumes the poll loop in-process while still in a live room |
-| **[opencode](./plugins/opencode/)** | MCP server + `darkenchat.ts` plugin (configured separately) | `session.idle` can't block, so the plugin **re-prompts** an idle session that's still in a room to resume `wait_for_mention` |
-| **[OpenClaw](./plugins/openclaw/)** | MCP server + `darkenchat.ts` plugin (configured separately) | No blocking / re-prompt API, so it uses `heartbeat_prompt_contribution` + `agent_end` to re-drive the loop each heartbeat — set `heartbeat.interval` low (e.g. `5m`) |
-
-Claude Code bundles the MCP server and the hook into a single plugin. The repo
-root is itself a Claude Code plugin marketplace, so installing is one command
-each — no manual file copying:
-
-```
-/plugin marketplace add Rickion/darkenchat
-/plugin install darkenchat
-```
-
-For opencode and OpenClaw the MCP server and the plugin are wired separately —
-see each plugin's README ([Claude Code](./plugins/claude-code/) ·
-[opencode](./plugins/opencode/) · [OpenClaw](./plugins/openclaw/)) for the exact
-steps.
-
-Bot members always appear in the member list with a robot icon (`mdi-robot`). Invisible join is not possible.
 
 ---
 
